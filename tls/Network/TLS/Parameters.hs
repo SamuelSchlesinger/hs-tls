@@ -32,6 +32,7 @@ module Network.TLS.Parameters (
 ) where
 
 import Control.Concurrent (MVar, newMVar, withMVar)
+import qualified Control.Exception as E
 import Crypto.HPKE
 import Data.Default (Default (def))
 import System.Environment (lookupEnv)
@@ -728,7 +729,7 @@ defaultServerHooks =
                     CertificateRejectOther "no client certificates expected"
         , onUnverifiedClientCert = return False
         , onCipherChoosing = \_ ccs -> case ccs of
-            [] -> error "onCipherChoosing"
+            [] -> E.throw $ Uncontextualized $ Error_Protocol "onCipherChoosing: no ciphers available" HandshakeFailure
             c : _ -> c
         , onServerNameIndication = \_ -> return mempty
         , onNewHandshake = \_ -> return True

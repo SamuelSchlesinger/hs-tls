@@ -80,11 +80,13 @@ module Network.TLS.Handshake.State (
     getCCS13Recv,
 ) where
 
+import qualified Control.Exception as E
 import Control.Monad.State.Strict
 
 import Network.TLS.Cipher
 import Network.TLS.Compression
 import Network.TLS.Crypto
+import Network.TLS.Error
 import Network.TLS.Imports
 import Network.TLS.Packet
 import Network.TLS.Record.State
@@ -495,7 +497,7 @@ getSessionHash :: HandshakeM ByteString
 getSessionHash = gets $ \hst ->
     case hstTransHashState hst of
         TransHashState2 hashCtx -> hashFinal hashCtx
-        _ -> error "un-initialized session hash"
+        _ -> E.throw $ Uncontextualized $ Error_Protocol "un-initialized session hash" InternalError
 
 -- | Set main secret and as a side effect generate the key block
 -- with all the right parameters, and setup the pending tx/rx state.

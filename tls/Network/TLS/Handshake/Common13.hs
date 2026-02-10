@@ -46,6 +46,7 @@ module Network.TLS.Handshake.Common13 (
 ) where
 
 import Control.Concurrent.MVar
+import qualified Control.Exception as E
 import Control.Monad.State.Strict
 import Crypto.BoringSSL.HMAC (constTimeEq)
 import qualified Data.ByteString as B
@@ -406,7 +407,7 @@ getHandshake13 ctx = RecvHandshake13M $ do
     recvLoop = do
         epkt <- liftIO (recvPacket13 ctx)
         case epkt of
-            Right (Handshake13 [] _) -> error "invalid recvPacket13 result"
+            Right (Handshake13 [] _) -> throwCore $ Error_Protocol "invalid recvPacket13 result" InternalError
             Right (Handshake13 (h : hs) (b : bs)) -> found (h, b) $ zip hs bs
             Right ChangeCipherSpec13 -> do
                 alreadyReceived <- liftIO $ usingHState ctx getCCS13Recv
@@ -580,7 +581,7 @@ keyShareKeyLength FFDHE3072 = 384
 keyShareKeyLength FFDHE4096 = 512
 keyShareKeyLength FFDHE6144 = 768
 keyShareKeyLength FFDHE8192 = 1024
-keyShareKeyLength _ = error "keyShareKeyLength"
+keyShareKeyLength _ = E.throw $ Uncontextualized $ Error_Protocol "keyShareKeyLength: unknown group" InternalError
 
 setRTT :: Context -> Millisecond -> IO ()
 setRTT ctx chSentTime = do

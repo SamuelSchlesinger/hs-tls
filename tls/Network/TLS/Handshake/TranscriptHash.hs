@@ -11,12 +11,14 @@ module Network.TLS.Handshake.TranscriptHash (
     TranscriptHash (..),
 ) where
 
+import qualified Control.Exception as E
 import Control.Monad.State
 import qualified Data.ByteString as B
 
 import Network.TLS.Cipher
 import Network.TLS.Context.Internal
 import Network.TLS.Crypto
+import Network.TLS.Error
 import Network.TLS.Handshake.State
 import Network.TLS.Imports
 import Network.TLS.Parameters
@@ -38,7 +40,7 @@ transitTranscriptHashI ctx label hashAlg isHRR = do
     traceTranscriptHash ctx label hstTransHashStateI
 
 transit :: String -> Hash -> Bool -> TransHashState -> TransHashState
-transit label _ _ st0@TransHashState0 = error $ "transitTranscriptHash " ++ label ++ " " ++ show st0
+transit label _ _ st0@TransHashState0 = E.throw $ Uncontextualized $ Error_Protocol ("transitTranscriptHash " ++ label ++ " " ++ show st0) InternalError
 transit _ _ _ st2@(TransHashState2 _) = st2
 transit _ hashAlg isHRR (TransHashState1 chs)
     | isHRR = TransHashState2 $ hashUpdate (hashInit hashAlg) hsMsg
@@ -88,7 +90,7 @@ transcriptHash ctx label = do
 
 calc :: String -> TransHashState -> ByteString
 calc _ (TransHashState2 hashCtx) = hashFinal hashCtx
-calc label st = error $ "transcriptHash " ++ label ++ " " ++ show st
+calc label st = E.throw $ Uncontextualized $ Error_Protocol ("transcriptHash " ++ label ++ " " ++ show st) InternalError
 
 ----------------------------------------------------------------
 
@@ -107,7 +109,7 @@ transcriptHashWith ctx label bs = do
 
 calcWith :: ByteString -> String -> TransHashState -> ByteString
 calcWith bs _ (TransHashState2 hashCtx) = hashFinal $ hashUpdate hashCtx bs
-calcWith _ label st = error $ "transcriptHashWith " ++ label ++ " " ++ show st
+calcWith _ label st = E.throw $ Uncontextualized $ Error_Protocol ("transcriptHashWith " ++ label ++ " " ++ show st) InternalError
 
 ----------------------------------------------------------------
 

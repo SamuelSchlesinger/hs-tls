@@ -46,6 +46,7 @@ module Network.TLS.Wire (
     encodeWord64,
 ) where
 
+import qualified Control.Exception as E
 import qualified Data.ByteString as B
 import Data.Serialize.Get hiding (runGet)
 import qualified Data.Serialize.Get as G
@@ -131,7 +132,7 @@ getList totalLen getElement = isolate totalLen (getElements totalLen)
   where
     getElements len
         | len < 0 =
-            error "list consumed too much data. should never happen with isolate."
+            E.throw $ Uncontextualized $ Error_Protocol "list consumed too much data. should never happen with isolate." InternalError
         | len == 0 = return []
         | otherwise =
             getElement >>= \(elementLen, a) -> (:) a <$> getElements (len - elementLen)

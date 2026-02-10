@@ -42,6 +42,7 @@ module Network.TLS.Crypto (
     pubkeyType,
 ) where
 
+import qualified Control.Exception as E
 import qualified Crypto.BoringSSL.Digest as Digest
 import qualified Crypto.BoringSSL.ECDSA as BECDSA
 import qualified Crypto.BoringSSL.Ed25519 as BEd25519
@@ -51,6 +52,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import Network.TLS.Crypto.IES
 import Network.TLS.Crypto.Types
+import Network.TLS.Error
 import Network.TLS.Imports
 
 {-# DEPRECATED PublicKey "use PubKey" #-}
@@ -119,7 +121,7 @@ hashAlgorithm SHA224 = Digest.SHA224
 hashAlgorithm SHA256 = Digest.SHA256
 hashAlgorithm SHA384 = Digest.SHA384
 hashAlgorithm SHA512 = Digest.SHA512
-hashAlgorithm SHA1_MD5 = error "hashAlgorithm: SHA1_MD5 has no single algorithm"
+hashAlgorithm SHA1_MD5 = E.throw $ Uncontextualized $ Error_Protocol "hashAlgorithm: SHA1_MD5 has no single algorithm" InternalError
 
 hashInit :: Hash -> HashContext
 hashInit SHA1_MD5 = unsafePerformIO $ do
@@ -153,7 +155,7 @@ hashUpdateSSL
     -> (ByteString, ByteString)
     -- ^ (for the md5 context, for the sha1 context)
     -> HashCtx
-hashUpdateSSL (HashContext _) _ = error "internal error: update SSL without a SSL Context"
+hashUpdateSSL (HashContext _) _ = E.throw $ Uncontextualized $ Error_Protocol "internal error: update SSL without a SSL Context" InternalError
 hashUpdateSSL (HashContextSSL sha1Ctx md5Ctx) (b1, b2) = unsafePerformIO $ do
     sha1Ctx' <- Digest.digestCopy sha1Ctx
     md5Ctx' <- Digest.digestCopy md5Ctx
@@ -237,7 +239,7 @@ kxCanUseRSApkcs1 pk h = unsafePerformIO $ do
     prefixSize SHA256 = 19
     prefixSize SHA384 = 19
     prefixSize SHA512 = 19
-    prefixSize _ = error (show h ++ " is not supported for RSASSA-PKCS1")
+    prefixSize _ = E.throw $ Uncontextualized $ Error_Protocol (show h ++ " is not supported for RSASSA-PKCS1") InternalError
 
 -- | Test the RSASSA-PSS length condition described in RFC 8017 section 9.1.1,
 -- i.e. @emBits >= 8hLen + 8sLen + 9@.  Lengths are in bits.

@@ -143,11 +143,9 @@ import Network.TLS.X509 (
     signedCertSubjectName,
  )
 
-import qualified Crypto.BoringSSL.Random
-import qualified Data.ByteString as B
+import qualified Control.Exception as E
 
 import Network.TLS.Crypto
-import Network.TLS.Crypto.BoringCompat (i2ospOf_, os2ip)
 import Network.TLS.Error
 import {-# SOURCE #-} Network.TLS.Extension
 import Network.TLS.HashAndSignature
@@ -398,36 +396,15 @@ dhUnwrap (p, g, _) y = [p, g, y]
 dhValid :: DHParams -> Integer -> Bool
 dhValid (p, _, _) y = 1 < y && y < p - 1
 
--- | Generate a DH key pair using IO-based randomness.
+-- | DHE key exchange is no longer supported (timing-vulnerable modular exponentiation removed).
 dhGenerateKeyPair :: DHParams -> IO (DHPrivate, DHPublic)
-dhGenerateKeyPair (p, g, bits) = do
-    -- Generate a random private exponent
-    privBytes <- Crypto.BoringSSL.Random.randomBytes ((bits + 7) `div` 8)
-    let privInt = os2ip privBytes `mod` (p - 2) + 2 -- ensure 2 <= priv < p
-        pubInt = modExp g privInt p
-    return (privInt, pubInt)
-  where
-    modExp base expo modulus = go base expo 1
-      where
-        go _ 0 acc = acc
-        go b e acc
-            | even e = go (b * b `mod` modulus) (e `div` 2) acc
-            | otherwise = go (b * b `mod` modulus) (e `div` 2) (acc * b `mod` modulus)
+dhGenerateKeyPair _ =
+    E.throwIO $ Uncontextualized $ Error_Protocol "DHE key exchange is not supported" HandshakeFailure
 
--- | Compute DH shared secret.
+-- | DHE key exchange is no longer supported (timing-vulnerable modular exponentiation removed).
 dhGetShared :: DHParams -> DHPrivate -> DHPublic -> DHKey
-dhGetShared (p, _, bits) priv pub =
-    let sharedInt = modExp pub priv p
-        -- Strip leading zeros, as required for DH(E) pre-main secret
-        bs = i2ospOf_ ((bits + 7) `div` 8) sharedInt
-    in snd $ B.span (== 0) bs
-  where
-    modExp base expo modulus = go base expo 1
-      where
-        go _ 0 acc = acc
-        go b e acc
-            | even e = go (b * b `mod` modulus) (e `div` 2) acc
-            | otherwise = go (b * b `mod` modulus) (e `div` 2) (acc * b `mod` modulus)
+dhGetShared _ _ _ =
+    E.throw $ Uncontextualized $ Error_Protocol "DHE key exchange is not supported" HandshakeFailure
 
 serverDHParamsFrom :: DHParams -> DHPublic -> ServerDHParams
 serverDHParamsFrom params dhPub =

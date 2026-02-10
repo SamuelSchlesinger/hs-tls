@@ -6,6 +6,7 @@ module Network.TLS.Handshake.Client (
     postHandshakeAuthClientWith,
 ) where
 
+import qualified Control.Exception as E
 import Network.TLS.Context.Internal
 import Network.TLS.Crypto
 import Network.TLS.Extension
@@ -130,7 +131,7 @@ helloRetry cparams ctx mparams ver crand groups = do
             | otherwise ->
                 throwCore $
                     Error_Protocol "server-selected group is not supported" IllegalParameter
-        Just _ -> error "handshake: invalid KeyShare value"
+        Just _ -> E.throwIO $ Uncontextualized $ Error_Protocol "handshake: invalid KeyShare value" InternalError
         Nothing ->
             throwCore $
                 Error_Protocol

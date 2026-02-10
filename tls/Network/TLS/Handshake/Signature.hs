@@ -16,6 +16,7 @@ module Network.TLS.Handshake.Signature (
     decryptError,
 ) where
 
+import qualified Control.Exception as E
 import Control.Monad.State.Strict
 
 import Network.TLS.Context.Internal
@@ -160,24 +161,24 @@ signatureParams (PubKeyRSA _) hashSigAlg =
         (HashIntrinsic, SignatureRSApssRSAeSHA512) -> RSAParams SHA512 RSApss
         (HashIntrinsic, SignatureRSApssRSAeSHA384) -> RSAParams SHA384 RSApss
         (HashIntrinsic, SignatureRSApssRSAeSHA256) -> RSAParams SHA256 RSApss
-        (hsh, SignatureRSA) -> error ("unimplemented RSA signature hash type: " ++ show hsh)
+        (hsh, SignatureRSA) -> E.throw $ Uncontextualized $ Error_Protocol ("unimplemented RSA signature hash type: " ++ show hsh) InternalError
         (_, sigAlg) ->
-            error ("signature algorithm is incompatible with RSA: " ++ show sigAlg)
+            E.throw $ Uncontextualized $ Error_Protocol ("signature algorithm is incompatible with RSA: " ++ show sigAlg) InternalError
 signatureParams (PubKeyEC _ _) hashSigAlg =
     case hashSigAlg of
         (HashSHA512, SignatureECDSA) -> ECDSAParams SHA512
         (HashSHA384, SignatureECDSA) -> ECDSAParams SHA384
         (HashSHA256, SignatureECDSA) -> ECDSAParams SHA256
         (HashSHA1, SignatureECDSA) -> ECDSAParams SHA1
-        (hsh, SignatureECDSA) -> error ("unimplemented ECDSA signature hash type: " ++ show hsh)
+        (hsh, SignatureECDSA) -> E.throw $ Uncontextualized $ Error_Protocol ("unimplemented ECDSA signature hash type: " ++ show hsh) InternalError
         (_, sigAlg) ->
-            error ("signature algorithm is incompatible with ECDSA: " ++ show sigAlg)
+            E.throw $ Uncontextualized $ Error_Protocol ("signature algorithm is incompatible with ECDSA: " ++ show sigAlg) InternalError
 signatureParams (PubKeyEd25519 _) hashSigAlg =
     case hashSigAlg of
         (HashIntrinsic, SignatureEd25519) -> Ed25519Params
-        (hsh, SignatureEd25519) -> error ("unimplemented Ed25519 signature hash type: " ++ show hsh)
+        (hsh, SignatureEd25519) -> E.throw $ Uncontextualized $ Error_Protocol ("unimplemented Ed25519 signature hash type: " ++ show hsh) InternalError
         (_, sigAlg) ->
-            error ("signature algorithm is incompatible with Ed25519: " ++ show sigAlg)
+            E.throw $ Uncontextualized $ Error_Protocol ("signature algorithm is incompatible with Ed25519: " ++ show sigAlg) InternalError
 
 signatureCreateWithCertVerifyData
     :: Context
@@ -197,10 +198,10 @@ signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) pubKey toVerifyData = 
                     | pubKey `signatureCompatible` hs ->
                         (signatureParams pubKey hashSigAlg, toVerifyData)
                     | otherwise ->
-                        error "expecting different signature algorithm"
+                        E.throw $ Uncontextualized $ Error_Protocol "expecting different signature algorithm" InternalError
                 _ ->
-                    error
-                        "not expecting hash and signature algorithm in a < TLS12 digitially signed structure"
+                    E.throw $ Uncontextualized $
+                        Error_Protocol "not expecting hash and signature algorithm in a < TLS12 digitially signed structure" InternalError
     signatureVerifyWithCertVerifyData ctx digSig (sigParam, toVerify)
 
 signatureVerifyWithCertVerifyData

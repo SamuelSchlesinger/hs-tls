@@ -148,20 +148,8 @@ processClientKeyXchg ctx (CKX_RSA encryptedPreMain) = do
                 | ver /= expectedVer -> usingHState ctx $ setMainSecretFromPre rver role random
                 | otherwise -> usingHState ctx $ setMainSecretFromPre rver role preMain
     logKey ctx (MainSecret mainSecret)
-processClientKeyXchg ctx (CKX_DH clientDHValue) = do
-    rver <- usingState_ ctx getVersion
-    role <- usingState_ ctx getRole
-
-    serverParams <- usingHState ctx getServerDHParams
-    let params = serverDHParamsToParams serverParams
-    unless (dhValid params $ dhUnwrapPublic clientDHValue) $
-        throwCore $
-            Error_Protocol "invalid client public key" IllegalParameter
-
-    dhpriv <- usingHState ctx getDHPrivate
-    let preMain = dhGetShared params dhpriv clientDHValue
-    mainSecret <- usingHState ctx $ setMainSecretFromPre rver role preMain
-    logKey ctx (MainSecret mainSecret)
+processClientKeyXchg _ctx (CKX_DH _clientDHValue) =
+    throwCore $ Error_Protocol "DHE key exchange is not supported" HandshakeFailure
 processClientKeyXchg ctx (CKX_ECDH bytes) = do
     ServerECDHParams grp _ <- usingHState ctx getServerECDHParams
     case decodeGroupPublic grp bytes of

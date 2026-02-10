@@ -61,9 +61,11 @@ module Network.TLS.Packet (
     getPRF,
 ) where
 
+import qualified Control.Exception as E
 import qualified Data.ByteString as B
 
 import Network.TLS.Crypto
+import Network.TLS.Error
 import Network.TLS.Imports
 import Network.TLS.MAC
 import Network.TLS.Struct
@@ -369,14 +371,14 @@ encodeHandshake' (NewSessionTicket life ticket) = runPut $ do
 encodeHandshake' (Certificate (CertificateChain_ cc)) = encodeCertificate cc
 encodeHandshake' (ServerKeyXchg skg) = runPut $
     case skg of
-        SKX_RSA _ -> error "encodeHandshake' SKX_RSA not implemented"
+        SKX_RSA _ -> E.throw $ Uncontextualized $ Error_Protocol "encodeHandshake' SKX_RSA not implemented" InternalError
         SKX_DH_Anon params -> putServerDHParams params
         SKX_DHE_RSA params sig -> putServerDHParams params >> putDigitallySigned sig
         SKX_DHE_DSA params sig -> putServerDHParams params >> putDigitallySigned sig
         SKX_ECDHE_RSA params sig -> putServerECDHParams params >> putDigitallySigned sig
         SKX_ECDHE_ECDSA params sig -> putServerECDHParams params >> putDigitallySigned sig
         SKX_Unparsed bytes -> putBytes bytes
-        _ -> error ("encodeHandshake': cannot handle: " ++ show skg)
+        _ -> E.throw $ Uncontextualized $ Error_Protocol ("encodeHandshake': cannot handle: " ++ show skg) InternalError
 encodeHandshake' (CertRequest certTypes sigAlgs certAuthorities) = runPut $ do
     putWords8 (map fromCertificateType certTypes)
     putWords16 $

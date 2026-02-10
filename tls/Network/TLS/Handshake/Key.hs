@@ -71,7 +71,8 @@ generateECDHEShared
 generateECDHEShared _ctx pub = groupGetPubShared pub
 
 generateDHE :: Context -> DHParams -> IO (DHPrivate, DHPublic)
-generateDHE _ctx dhp = dhGenerateKeyPair dhp
+generateDHE _ctx _dhp =
+    E.throwIO $ Uncontextualized $ Error_Protocol "DHE key exchange is not supported" HandshakeFailure
 
 findFiniteFieldGroup :: DHParams -> Maybe Group
 findFiniteFieldGroup _params = Nothing

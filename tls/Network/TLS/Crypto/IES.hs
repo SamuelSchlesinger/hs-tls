@@ -18,11 +18,13 @@ module Network.TLS.Crypto.IES (
     decodeGroupPublic,
 ) where
 
+import qualified Control.Exception as E
 import qualified Crypto.BoringSSL.ECDH as ECDH
 import qualified Crypto.BoringSSL.X25519 as X25519
 import System.IO.Unsafe (unsafePerformIO)
 
 import Network.TLS.Crypto.Types
+import Network.TLS.Error
 import Network.TLS.Imports
 
 -- | Private key for a named group.
@@ -66,7 +68,7 @@ groupGenerateKeyPair P521 = ecGenerateKeyPair ECDH.P521 GroupPri_P521 GroupPub_P
 groupGenerateKeyPair X25519 = do
     (pub, pri) <- X25519.generateKeyPair
     return (GroupPri_X255 pri, GroupPub_X255 pub)
-groupGenerateKeyPair grp = error $ "groupGenerateKeyPair: unsupported group " ++ show grp
+groupGenerateKeyPair grp = E.throwIO $ Uncontextualized $ Error_Protocol ("groupGenerateKeyPair: unsupported group " ++ show grp) InternalError
 
 ecGenerateKeyPair
     :: ECDH.ECCurve
@@ -76,11 +78,11 @@ ecGenerateKeyPair
 ecGenerateKeyPair curve priTag pubTag = do
     ekp <- ECDH.generateECKeyPair curve
     case ekp of
-        Left err -> error $ "EC key generation failed: " ++ show err
+        Left err -> E.throwIO $ Uncontextualized $ Error_Protocol ("EC key generation failed: " ++ show err) InternalError
         Right kp -> do
             epub <- ECDH.ecPublicKeyBytes kp
             case epub of
-                Left err -> error $ "EC public key encoding failed: " ++ show err
+                Left err -> E.throwIO $ Uncontextualized $ Error_Protocol ("EC public key encoding failed: " ++ show err) InternalError
                 Right pubBytes -> return (priTag kp, pubTag pubBytes)
 
 -- | Generate a new key pair and compute a shared secret with the given

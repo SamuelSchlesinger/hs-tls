@@ -26,7 +26,6 @@ import Network.TLS.Session
 import Network.TLS.State
 import Network.TLS.Struct
 import Network.TLS.Types
-import Network.TLS.Util (catchException)
 import Network.TLS.Wire
 import Network.TLS.X509 hiding (Certificate)
 
@@ -196,45 +195,8 @@ getCKX_DHE
     :: ClientParams
     -> Context
     -> IO (ClientKeyXchgAlgorithmData, HandshakeM ByteString)
-getCKX_DHE cparams ctx = do
-    xver <- usingState_ ctx getVersion
-    serverParams <- usingHState ctx getServerDHParams
-
-    let params = serverDHParamsToParams serverParams
-        ffGroup = findFiniteFieldGroup params
-        srvpub = serverDHParamsToPublic serverParams
-
-    unless (maybe False (isSupportedGroup ctx) ffGroup) $ do
-        groupUsage <-
-            onCustomFFDHEGroup (clientHooks cparams) params srvpub
-                `catchException` throwMiscErrorOnException "custom group callback failed"
-        case groupUsage of
-            GroupUsageInsecure ->
-                throwCore $
-                    Error_Protocol "FFDHE group is not secure enough" InsufficientSecurity
-            GroupUsageUnsupported reason ->
-                throwCore $
-                    Error_Protocol ("unsupported FFDHE group: " ++ reason) HandshakeFailure
-            GroupUsageInvalidPublic -> throwCore $ Error_Protocol "invalid server public key" IllegalParameter
-            GroupUsageValid -> return ()
-
-    -- When grp is known but not in the supported list we use it
-    -- anyway.  This provides additional validation and a more
-    -- efficient implementation.
-    (clientDHPub, preMain) <-
-        case ffGroup of
-            Nothing -> do
-                (clientDHPriv, clientDHPub) <- generateDHE ctx params
-                let preMain = dhGetShared params clientDHPriv srvpub
-                return (clientDHPub, preMain)
-            Just grp -> do
-                usingHState ctx $ setSupportedGroup grp
-                -- FFDHE groups are no longer supported
-                throwCore $
-                    Error_Protocol ("FFDHE group " ++ show grp ++ " is not supported") HandshakeFailure
-
-    let setMainSec = setMainSecretFromPre xver ClientRole preMain
-    return (CKX_DH clientDHPub, setMainSec)
+getCKX_DHE _cparams _ctx =
+    throwCore $ Error_Protocol "DHE key exchange is not supported" HandshakeFailure
 
 --------------------------------
 

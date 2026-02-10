@@ -68,10 +68,12 @@ module Network.TLS.State (
     genRandom,
 ) where
 
+import qualified Control.Exception as E
 import Control.Monad.State.Strict
 import Network.TLS.X509 (CertificateChain)
 
 import Network.TLS.ErrT
+import Network.TLS.Error
 import Network.TLS.Extension
 import Network.TLS.Imports
 import Network.TLS.RNG
@@ -226,7 +228,7 @@ setVersionIfUnset ver = modify' maybeSet
 
 getVersion :: TLSSt Version
 getVersion =
-    fromMaybe (error "internal error: version hasn't been set yet")
+    fromMaybe (E.throw $ Uncontextualized $ Error_Protocol "internal error: version hasn't been set yet" InternalError)
         <$> gets stVersion
 
 getVersionWithDefault :: Version -> TLSSt Version

@@ -164,7 +164,7 @@ sendServerFirstFlight ServerParams{..} ctx usedCipher mcred chExts = do
     -- not called.
     decideHashSig pubKey = do
         case filter (pubKey `signatureCompatible`) commonHashSigs of
-            [] -> error ("no hash signature for " ++ pubkeyType pubKey)
+            [] -> throwCore $ Error_Protocol ("no hash signature for " ++ pubkeyType pubKey) HandshakeFailure
             x : _ -> return x
 
     setup_ECDHE grp = do
@@ -188,7 +188,7 @@ sendServerFirstFlight ServerParams{..} ctx usedCipher mcred chExts = do
             KX_RSA -> return $ SKX_ECDHE_RSA serverParams signed
             KX_ECDSA -> return $ SKX_ECDHE_ECDSA serverParams signed
             _ ->
-                error ("generate skx_ecdhe unsupported key exchange signature: " ++ show kxsAlg)
+                throwCore $ Error_Protocol ("unsupported key exchange signature: " ++ show kxsAlg) HandshakeFailure
 
 ---
 -- When the client sends a certificate, check whether

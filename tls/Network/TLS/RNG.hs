@@ -12,6 +12,7 @@ module Network.TLS.RNG (
     hmacDrbgGenerate,
 ) where
 
+import qualified Control.Exception as E
 import qualified Crypto.BoringSSL.Digest as Digest
 import qualified Crypto.BoringSSL.HMAC as HMAC
 import qualified Crypto.BoringSSL.Random as Random
@@ -19,6 +20,7 @@ import qualified Data.ByteString as B
 import Data.ByteString (ByteString)
 
 import Network.TLS.Crypto.BoringCompat (i2ospOf_, os2ip)
+import Network.TLS.Error
 
 -- | Seed for initializing the DRBG.
 newtype Seed = Seed ByteString
@@ -82,4 +84,4 @@ hmacDrbgGenerate n (StateRNG k v0) =
 hmac256 :: ByteString -> ByteString -> ByteString
 hmac256 key msg = case HMAC.hmac Digest.SHA256 key msg of
     Right bs -> bs
-    Left _ -> error "hmac256: HMAC-SHA256 failed unexpectedly"
+    Left _ -> E.throw $ Uncontextualized $ Error_Protocol "hmac256: HMAC-SHA256 failed unexpectedly" InternalError

@@ -7,10 +7,12 @@ module Network.TLS.MAC (
     prf_MD5SHA1,
 ) where
 
+import qualified Control.Exception as E
 import qualified Crypto.BoringSSL.HMAC as BHMAC
 import qualified Data.ByteString as B
 
 import Network.TLS.Crypto (Hash (..), hashAlgorithm)
+import Network.TLS.Error
 import Network.TLS.Crypto.BoringCompat (bsXor)
 import Network.TLS.Imports
 import Network.TLS.Types
@@ -22,7 +24,7 @@ hmac :: Hash -> HMAC
 hmac alg secret msg =
     case BHMAC.hmac (hashAlgorithm alg) secret msg of
         Right result -> result
-        Left err -> error ("hmac: internal error: " ++ show err)
+        Left err -> E.throw $ Uncontextualized $ Error_Protocol ("hmac: internal error: " ++ show err) InternalError
 
 hmacIter
     :: HMAC -> ByteString -> ByteString -> ByteString -> Int -> [ByteString]

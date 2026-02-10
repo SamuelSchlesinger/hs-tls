@@ -494,13 +494,13 @@ dupCompExts host mpskExt chExts = step1 chExts
       where
         echExtO = ExtensionRaw EID_EncryptedClientHello ""
         (os, is) = step2 exts
-    step1 _ = error "step1"
+    step1 _ = E.throw $ Uncontextualized $ Error_Protocol "dupCompExts: expected ECH extension first" InternalError
     step2 (sniExtI@(ExtensionRaw EID_ServerName _) : exts) =
         (sniExtO : os, sniExtI : is)
       where
         sniExtO = toExtensionRaw $ ServerName [ServerNameHostName host]
         (os, is) = step3 exts id
-    step2 _ = error "step2"
+    step2 _ = E.throw $ Uncontextualized $ Error_Protocol "dupCompExts: expected SNI extension after ECH" InternalError
     step3 [] build = ([], [echOuterExt])
       where
         echOuterExt = toExtensionRaw $ EchOuterExtensions $ build []

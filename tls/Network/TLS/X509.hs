@@ -43,7 +43,7 @@ import Data.Char (toLower)
 import Network.TLS.Error
 import qualified Data.ByteString.Char8 as C8
 import Data.ByteString (ByteString)
-import Data.List (isPrefixOf, isSuffixOf)
+import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -140,7 +140,7 @@ isNullCertificateChain :: CertificateChain -> Bool
 isNullCertificateChain (CertificateChain l) = null l
 
 getCertificateChainLeaf :: CertificateChain -> SignedCertificate
-getCertificateChainLeaf (CertificateChain []) = error "empty certificate chain"
+getCertificateChainLeaf (CertificateChain []) = E.throw $ Uncontextualized $ Error_Protocol "empty certificate chain" InternalError
 getCertificateChainLeaf (CertificateChain (x : _)) = x
 
 -- | Certificate and Chain rejection reason
@@ -210,7 +210,7 @@ validateDefault
     -> ServiceID
     -> CertificateChain
     -> IO [FailedReason]
-validateDefault (CertificateStore store) _cache _serviceID (CertificateChain []) =
+validateDefault (CertificateStore _) _cache _serviceID (CertificateChain []) =
     return [EmptyChain]
 validateDefault (CertificateStore store) _cache serviceID (CertificateChain (leaf : intermediates)) = do
     let leafCert = scCert leaf
@@ -244,9 +244,10 @@ matchHostname :: String -> String -> Bool
 matchHostname hostname pattern'
     | "*." `isPrefixOf` lPattern =
         let suffix = drop 2 lPattern
-        in case break (== '.') lHostname of
-            (_, []) -> False -- hostname has no dot, can't match *.x
-            (_, rest) -> drop 1 rest == suffix && not (null (takeWhile (/= '.') lHostname))
+        in if '.' `notElem` suffix then False
+           else case break (== '.') lHostname of
+                (_, []) -> False
+                (_, rest) -> drop 1 rest == suffix
     | otherwise = lHostname == lPattern
   where
     lHostname = map toLower hostname

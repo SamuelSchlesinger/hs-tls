@@ -40,7 +40,7 @@ module Network.TLS.Handshake.Common (
 ) where
 
 import Control.Concurrent.MVar
-import Control.Exception (IOException, fromException, handle, throwIO)
+import Control.Exception (IOException, fromException, handle, throw, throwIO)
 import Control.Monad.State.Strict
 import Crypto.BoringSSL.HMAC (constTimeEq)
 import qualified Data.ByteString as B
@@ -203,7 +203,7 @@ processExtendedMainSecret
     :: MonadIO m => Context -> Version -> MessageType -> [ExtensionRaw] -> m Bool
 processExtendedMainSecret ctx ver msgt exts
     | ver < TLS10 = return False
-    | ver > TLS12 = error "EMS processing is not compatible with TLS 1.3"
+    | ver > TLS12 = throwCore $ Error_Protocol "EMS processing is not compatible with TLS 1.3" InternalError
     | ems == NoEMS = return False
     | otherwise =
         liftIO $
@@ -273,7 +273,7 @@ storePrivInfo ctx cc privkey = do
     return pubkey
   where
     fromCC (CertificateChain (c : _)) = c
-    fromCC _ = error "fromCC"
+    fromCC _ = throw $ Uncontextualized $ Error_Protocol "empty certificate chain" InternalError
 
 -- verify that the group selected by the peer is supported in the local
 -- configuration
