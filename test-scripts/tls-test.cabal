@@ -32,7 +32,7 @@ executable TestClient
         unix,
         process,
         utf8-string,
-        tls
+        boring-tls
 
     if os(windows)
         buildable: False

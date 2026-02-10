@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 -- Disable this warning so we can still test deprecated functionality.
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 
@@ -19,10 +18,6 @@ module Common (
 import Data.Char (isDigit)
 import Network.Socket
 import Numeric (showHex)
-
-import Crypto.System.CPU
-import Data.X509.CertificateStore
-import System.X509
 
 import Network.TLS hiding (HostName)
 import Network.TLS.Extra.Cipher
@@ -57,7 +52,6 @@ namedGroups =
     , ("p384", P384)
     , ("p521", P521)
     , ("x25519", X25519)
-    , ("x448", X448)
     ]
 
 readNumber :: (Num a, Read a) => String -> Maybe a
@@ -97,16 +91,11 @@ printCiphers = do
     putStrLn "====================================="
     forM_ namedCiphersuites $ \(name, _) -> putStrLn name
     putStrLn ""
-    putStrLn
-        ("Using crypton-" ++ VERSION_crypton ++ " with CPU support for: " ++ cpuSupport)
+    putStrLn "Using boringssl"
   where
     pad n s
         | length s < n = s ++ replicate (n - length s) ' '
         | otherwise = s
-
-    cpuSupport
-        | null processorOptions = "(nothing)"
-        | otherwise = intercalate ", " (map show processorOptions)
 
 printDHParams :: IO ()
 printDHParams = do
@@ -161,10 +150,8 @@ split c s = case break (c ==) s of
 
 getCertificateStore :: [FilePath] -> IO CertificateStore
 getCertificateStore [] = getSystemCertificateStore
-getCertificateStore paths = foldM readPathAppend mempty paths
-  where
-    readPathAppend acc path = do
-        mstore <- readCertificateStore path
-        case mstore of
-            Nothing -> error ("invalid certificate store: " ++ path)
-            Just st -> return $! mappend st acc
+getCertificateStore paths = do
+    mstore <- readCertificateStoreFromFiles paths
+    case mstore of
+        Nothing -> error ("no valid certificates found in: " ++ show paths)
+        Just st -> return st

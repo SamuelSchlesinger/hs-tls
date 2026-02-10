@@ -120,9 +120,12 @@ sendServerFirstFlight ServerParams{..} ctx usedCipher mcred chExts = do
 
     -- send server key exchange if needed
     skx <- case cipherKeyExchange usedCipher of
-        CipherKeyExchange_DH_Anon -> Just <$> generateSKX_DH_Anon
-        CipherKeyExchange_DHE_RSA -> Just <$> generateSKX_DHE KX_RSA
-        CipherKeyExchange_DHE_DSA -> Just <$> generateSKX_DHE KX_DSA
+        CipherKeyExchange_DH_Anon ->
+            throwCore $ Error_Protocol "DH_Anon key exchange is not supported" HandshakeFailure
+        CipherKeyExchange_DHE_RSA ->
+            throwCore $ Error_Protocol "DHE_RSA key exchange is not supported" HandshakeFailure
+        CipherKeyExchange_DHE_DSA ->
+            throwCore $ Error_Protocol "DHE_DSA key exchange is not supported" HandshakeFailure
         CipherKeyExchange_ECDHE_RSA -> Just <$> generateSKX_ECDHE KX_RSA
         CipherKeyExchange_ECDHE_ECDSA -> Just <$> generateSKX_ECDHE KX_ECDSA
         _ -> return Nothing
@@ -153,30 +156,7 @@ sendServerFirstFlight ServerParams{..} ctx usedCipher mcred chExts = do
   where
     commonGroups = negotiatedGroupsInCommon (supportedGroups serverSupported) chExts
     commonHashSigs = hashAndSignaturesInCommon (supportedHashSignatures serverSupported) chExts
-    setup_DHE = do
-        let possibleFFGroups = commonGroups `intersect` availableFFGroups
-        (dhparams, priv, pub) <-
-            case possibleFFGroups of
-                [] ->
-                    let dhparams = fromJust serverDHEParams
-                     in case findFiniteFieldGroup dhparams of
-                            Just g -> do
-                                usingHState ctx $ setSupportedGroup g
-                                generateFFDHE ctx g
-                            Nothing -> do
-                                (priv, pub) <- generateDHE ctx dhparams
-                                return (dhparams, priv, pub)
-                g : _ -> do
-                    usingHState ctx $ setSupportedGroup g
-                    generateFFDHE ctx g
-
-        let serverParams = serverDHParamsFrom dhparams pub
-
-        usingHState ctx $ setServerDHParams serverParams
-        usingHState ctx $ setDHPrivate priv
-        return serverParams
-
-    -- Choosing a hash algorithm to sign (EC)DHE parameters
+    -- Choosing a hash algorithm to sign ECDHE parameters
     -- in ServerKeyExchange. Hash algorithm is not suggested by
     -- the chosen cipher suite. So, it should be selected based on
     -- the "signature_algorithms" extension in a client hello.
@@ -186,19 +166,6 @@ sendServerFirstFlight ServerParams{..} ctx usedCipher mcred chExts = do
         case filter (pubKey `signatureCompatible`) commonHashSigs of
             [] -> error ("no hash signature for " ++ pubkeyType pubKey)
             x : _ -> return x
-
-    generateSKX_DHE kxsAlg = do
-        serverParams <- setup_DHE
-        pubKey <- getLocalPublicKey ctx
-        mhashSig <- decideHashSig pubKey
-        signed <- digitallySignDHParams ctx serverParams pubKey mhashSig
-        case kxsAlg of
-            KX_RSA -> return $ SKX_DHE_RSA serverParams signed
-            KX_DSA -> return $ SKX_DHE_DSA serverParams signed
-            _ ->
-                error ("generate skx_dhe unsupported key exchange signature: " ++ show kxsAlg)
-
-    generateSKX_DH_Anon = SKX_DH_Anon <$> setup_DHE
 
     setup_ECDHE grp = do
         usingHState ctx $ setSupportedGroup grp

@@ -81,8 +81,6 @@ module Network.TLS.Handshake.State (
 ) where
 
 import Control.Monad.State.Strict
-import Data.ByteArray (ByteArrayAccess)
-import Data.X509 (CertificateChain)
 
 import Network.TLS.Cipher
 import Network.TLS.Compression
@@ -92,6 +90,7 @@ import Network.TLS.Packet
 import Network.TLS.Record.State
 import Network.TLS.Struct
 import Network.TLS.Types
+import Network.TLS.X509 (CertificateChain)
 import Network.TLS.Util
 
 data HandshakeKeyState = HandshakeKeyState
@@ -166,7 +165,9 @@ data HandshakeState = HandshakeState
     , hstTLS13ECHAccepted :: Bool
     , hstTLS13ECHEE :: Bool
     }
-    deriving (Show)
+
+instance Show HandshakeState where
+    show _ = "HandshakeState{..}"
 
 -- | When we receive a CertificateRequest from a server, a just-in-time
 --    callback is issued to the application to obtain a suitable certificate.
@@ -463,12 +464,11 @@ getHandshakeMessages = gets (reverse . hstHandshakeMessages)
 
 -- | Generate the main secret from the pre-main secret.
 setMainSecretFromPre
-    :: ByteArrayAccess preMain
-    => Version
+    :: Version
     -- ^ chosen transmission version
     -> Role
     -- ^ the role (Client or Server) of the generating side
-    -> preMain
+    -> ByteString
     -- ^ the pre-main secret
     -> HandshakeM ByteString
 setMainSecretFromPre ver role preMainSecret = do

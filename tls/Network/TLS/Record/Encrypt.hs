@@ -12,9 +12,9 @@ module Network.TLS.Record.Encrypt (
 ) where
 
 import Control.Monad.State.Strict
-import Crypto.Cipher.Types (AuthTag (..))
-import qualified Data.ByteArray as B (convert, xor)
 import qualified Data.ByteString as B
+
+import Network.TLS.Crypto.BoringCompat (bsXor)
 
 import Network.TLS.Cipher
 import Network.TLS.Imports
@@ -117,12 +117,12 @@ encryptAead tls13 bulk encryptF content record = do
             | otherwise = B.concat [encodedSeq, encodeHeader hdr]
         sqnc = B.replicate (ivlen - 8) 0 `B.append` encodedSeq
         nonce
-            | nonceExpLen == 0 = B.xor iv sqnc
+            | nonceExpLen == 0 = bsXor iv sqnc
             | otherwise = B.concat [iv, encodedSeq]
         (e, AuthTag authtag) = encryptF nonce content ad
         econtent
-            | nonceExpLen == 0 = e `B.append` B.convert authtag
-            | otherwise = B.concat [encodedSeq, e, B.convert authtag]
+            | nonceExpLen == 0 = e `B.append` authtag
+            | otherwise = B.concat [encodedSeq, e, authtag]
     modify' incrRecordState
     return econtent
 

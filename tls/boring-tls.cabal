@@ -1,5 +1,5 @@
 cabal-version:      >=1.10
-name:               tls
+name:               boring-tls
 version:            2.2.2
 license:            BSD3
 license-file:       LICENSE
@@ -7,9 +7,10 @@ copyright:          Vincent Hanquez <vincent@snarc.org>
 maintainer:         Kazu Yamamoto <kazu@iij.ad.jp>
 author:             Vincent Hanquez <vincent@snarc.org>
 homepage:           https://github.com/haskell-tls/hs-tls
-synopsis:           TLS protocol native implementation
+synopsis:           TLS protocol native implementation backed by BoringSSL
 description:
-    Native Haskell TLS 1.2/1.3 protocol implementation for servers and clients.
+    Native Haskell TLS 1.2/1.3 protocol implementation for servers and clients,
+    using boringssl-hs for cryptographic operations.
 
 category:           Network
 build-type:         Simple
@@ -46,7 +47,7 @@ library
         Network.TLS.Credentials
         Network.TLS.Backend
         Network.TLS.Crypto
-        Network.TLS.Crypto.DH
+        Network.TLS.Crypto.BoringCompat
         Network.TLS.Crypto.IES
         Network.TLS.Crypto.Types
         Network.TLS.ErrT
@@ -108,7 +109,7 @@ library
         Network.TLS.Types.Session
         Network.TLS.Types.Version
         Network.TLS.Util
-        Network.TLS.Util.ASN1
+--        Network.TLS.Util.ASN1
         Network.TLS.Util.Serialization
         Network.TLS.Wire
         Network.TLS.X509
@@ -119,18 +120,13 @@ library
     build-depends:
         base >=4.9 && <5,
         base16-bytestring,
+        boringssl,
         bytestring >=0.10 && <0.13,
         cereal >=0.5.3 && <0.6,
-        crypton >=0.34,
-        crypton-asn1-encoding >= 0.10.0 && < 0.11,
-        crypton-asn1-types >= 0.4.1 && < 0.5,
-        crypton-x509 >=1.8 && <1.9,
-        crypton-x509-store >=1.8 && <1.9,
-        crypton-x509-validation >=1.8 && <1.9,
         data-default,
+        directory,
         ech-config,
         hpke,
-        memory >=0.18 && <0.19,
         mtl >=2.2 && <2.4,
         network >=3.1,
         random >=1.2 && <1.4,
@@ -140,7 +136,7 @@ library
         zlib >=0.7 && <0.8
 
 executable tls-server
-    main-is:            tls-server.hs
+    main-is:            boring-tls-server.hs
     hs-source-dirs:     util
     other-modules:
         Common
@@ -153,15 +149,13 @@ executable tls-server
     build-depends:
         base >=4.9 && <5,
         base16-bytestring,
+        boringssl,
         bytestring,
         containers,
-        crypton,
-        crypton-x509-store,
-        crypton-x509-system,
         ech-config,
         network,
         network-run,
-        tls
+        boring-tls
 
     if flag(devel)
 
@@ -169,7 +163,7 @@ executable tls-server
         buildable: False
 
 executable tls-client
-    main-is:            tls-client.hs
+    main-is:            boring-tls-client.hs
     hs-source-dirs:     util
     other-modules:
         Client
@@ -182,14 +176,12 @@ executable tls-client
     build-depends:
         base >=4.9 && <5,
         base16-bytestring,
+        boringssl,
         bytestring,
-        crypton,
-        crypton-x509-store,
-        crypton-x509-system,
         ech-config,
         network,
         network-run >=0.5,
-        tls
+        boring-tls
 
     if flag(devel)
 
@@ -223,16 +215,12 @@ test-suite spec
         QuickCheck,
         async,
         base64-bytestring,
+        boringssl,
         bytestring,
-        crypton,
-        crypton-asn1-types,
-        crypton-x509,
-        crypton-x509-validation,
         ech-config,
         hspec,
         serialise,
-        time-hourglass,
-        tls
+        boring-tls
 
 benchmark tls-bench
     type:             exitcode-stdio-1.0
@@ -259,13 +247,9 @@ benchmark tls-bench
         QuickCheck,
         async,
         base64-bytestring,
+        boringssl,
         bytestring,
         containers,
-        crypton,
-        crypton-asn1-types,
-        crypton-x509,
-        crypton-x509-store,
-        crypton-x509-validation,
         data-default,
         ech-config,
         hspec,
@@ -273,5 +257,4 @@ benchmark tls-bench
         network-run,
         serialise,
         tasty-bench,
-        time-hourglass,
-        tls
+        boring-tls

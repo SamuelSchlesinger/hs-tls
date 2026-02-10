@@ -15,7 +15,7 @@ module Network.TLS.Handshake.Server.Common (
 ) where
 
 import Control.Monad.State.Strict
-import Data.X509 (ExtKeyUsageFlag (..))
+import Network.TLS.X509 (ExtKeyUsageFlag (..))
 
 import Network.TLS.Context.Internal
 import Network.TLS.Credentials

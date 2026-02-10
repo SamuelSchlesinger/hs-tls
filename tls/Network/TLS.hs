@@ -1,17 +1,17 @@
 -- |
 -- Native Haskell TLS protocol implementation for servers and
--- clients.
+-- clients, backed by BoringSSL for cryptographic operations.
 --
 -- This provides a high-level implementation of a sensitive security
 -- protocol, eliminating a common set of security issues through the
 -- use of the advanced type system, high level constructions and
 -- common Haskell features.
 --
--- Currently implement the TLS1.2 and TLS 1.3
--- protocol, and support RSA and Ephemeral (Elliptic curve and
+-- Currently implements TLS 1.2 and TLS 1.3,
+-- and supports RSA and Ephemeral (Elliptic curve and
 -- regular) Diffie Hellman key exchanges, and many extensions.
 --
--- The tipical usage is:
+-- The typical usage is:
 --
 -- > socket <- ...
 -- > ctx <- contextNew socket <params>
@@ -130,6 +130,9 @@ module Network.TLS (
     defaultKeyLogger,
     debugError,
     debugTraceKey,
+    Seed,
+    seedToInteger,
+    seedFromInteger,
 
     -- ** Limit parameters
     Limit,
@@ -175,13 +178,22 @@ module Network.TLS (
     TLS13TicketInfo,
     is0RTTPossible,
 
+    -- ** Certificate Store
+    CertificateStore (..),
+    emptyCertificateStore,
+    readCertificateStore,
+    readCertificateStoreFromFiles,
+    getSystemCertificateStore,
+
     -- ** Validation Cache
-    ValidationCache (..),
+    ValidationCache,
     defaultValidationCache,
-    ValidationCacheQueryCallback,
-    ValidationCacheAddCallback,
-    ValidationCacheResult (..),
     exceptionValidationCache,
+
+    -- ** Certificate Validation
+    validateDefault,
+    FailedReason (..),
+    ServiceID,
 
     -- * Types
 
@@ -205,6 +217,10 @@ module Network.TLS (
     CertificateRejectReason (..),
     CertificateType (..),
     CertificateChain (..),
+    SignedCertificate (..),
+    Certificate (..),
+    DistinguishedName (..),
+    getCertificate,
     HostName,
     MaxFragmentEnum (..),
 
@@ -300,13 +316,8 @@ module Network.TLS (
     -- * Deprecated
     recvData',
     Bytes,
-    ValidationChecks (..),
-    ValidationHooks (..),
     clientUseMaxFragmentLength,
 ) where
-
-import Data.X509 (PrivKey (..), PubKey (..))
-import Data.X509.Validation hiding (HostName, defaultHooks)
 
 import Network.TLS.Backend (Backend (..), HasBackend (..))
 import Network.TLS.Cipher
@@ -319,12 +330,13 @@ import Network.TLS.Context
 import Network.TLS.Core
 import Network.TLS.Credentials
 import Network.TLS.Crypto (
-    DHParams,
-    DHPublic,
     Group (..),
     KxError (..),
+    PubKey (..),
+    PrivKey (..),
     supportedNamedGroups,
  )
+import Network.TLS.Struct (DHParams, DHPublic)
 import Network.TLS.Handshake.State (HandshakeMode13 (..))
 import Network.TLS.Hooks
 import Network.TLS.Imports
@@ -347,6 +359,7 @@ import Network.TLS.Struct (
     TLSException (..),
     supportedSignatureSchemes,
  )
+import Network.TLS.RNG (Seed, seedToInteger, seedFromInteger)
 import Network.TLS.Struct13 (Handshake13)
 import Network.TLS.Types
 import Network.TLS.X509
@@ -366,4 +379,4 @@ getClientCertificateChain ctx = usingState_ ctx S.getClientCertificateChain
 --     Since 1.8.0, this library only throws exceptions of type 'TLSException'.
 --     In the common case where the chosen backend is socket, 'IOException'
 --     may be thrown as well. This happens because the backend for sockets,
---     opaque to most modules in the @tls@ library, throws those exceptions.
+--     opaque to most modules in the @boring-tls@ library, throws those exceptions.

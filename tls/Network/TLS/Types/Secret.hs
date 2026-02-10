@@ -1,5 +1,7 @@
 module Network.TLS.Types.Secret where
 
+import qualified Data.ByteString as B
+
 import Network.TLS.Imports
 
 -- | Phantom type indicating early traffic secret.
@@ -16,26 +18,26 @@ data ResumptionSecret
 newtype BaseSecret a = BaseSecret ByteString
 
 instance Show (BaseSecret a) where
-    show (BaseSecret bs) = showBytesHex bs
+    show (BaseSecret bs) = "BaseSecret[" ++ show (B.length bs) ++ " bytes]"
 
 newtype AnyTrafficSecret a = AnyTrafficSecret ByteString
 
 instance Show (AnyTrafficSecret a) where
-    show (AnyTrafficSecret bs) = showBytesHex bs
+    show (AnyTrafficSecret bs) = "AnyTrafficSecret[" ++ show (B.length bs) ++ " bytes]"
 
 -- | A client traffic secret, typed with a parameter indicating a step in the
 -- TLS key schedule.
 newtype ClientTrafficSecret a = ClientTrafficSecret ByteString
 
 instance Show (ClientTrafficSecret a) where
-    show (ClientTrafficSecret bs) = showBytesHex bs
+    show (ClientTrafficSecret bs) = "ClientTrafficSecret[" ++ show (B.length bs) ++ " bytes]"
 
 -- | A server traffic secret, typed with a parameter indicating a step in the
 -- TLS key schedule.
 newtype ServerTrafficSecret a = ServerTrafficSecret ByteString
 
 instance Show (ServerTrafficSecret a) where
-    show (ServerTrafficSecret bs) = showBytesHex bs
+    show (ServerTrafficSecret bs) = "ServerTrafficSecret[" ++ show (B.length bs) ++ " bytes]"
 
 data SecretTriple a = SecretTriple
     { triBase :: BaseSecret a
@@ -57,4 +59,4 @@ type TrafficSecrets a = (ClientTrafficSecret a, ServerTrafficSecret a)
 newtype MainSecret = MainSecret ByteString
 
 instance Show MainSecret where
-    show (MainSecret bs) = showBytesHex bs
+    show (MainSecret bs) = "MainSecret[" ++ show (B.length bs) ++ " bytes]"

@@ -41,7 +41,9 @@ data CryptState = CryptState
       -- In TLS 1.3, this holds application traffic secret N.
       cstMacSecret :: ByteString
     }
-    deriving (Show)
+
+instance Show CryptState where
+    show _ = "CryptState{..}"
 
 newtype MacState = MacState
     { msSequence :: Word64

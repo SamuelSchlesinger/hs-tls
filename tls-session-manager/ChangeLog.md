@@ -1,5 +1,9 @@
 # ChangeLog for tls-session-manager
 
+## 0.0.9
+
+* Updated to depend on `boring-tls` (renamed from `tls`).
+
 ## 0.0.8
 
 * Removing "basement".

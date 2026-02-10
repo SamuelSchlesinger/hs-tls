@@ -1,4 +1,20 @@
-# Change log for "tls"
+# Change log for "boring-tls"
+
+## Version 3.0.0
+
+* Package renamed from `tls` to `boring-tls`.
+* All cryptographic operations now use `boringssl-hs` (BoringSSL FFI bindings)
+  instead of the `crypton`/`cryptonite` ecosystem.
+* Removed all dependencies on `crypton`, `crypton-x509-*`, `crypton-pem`,
+  `crypton-asn1-*`, `memory`, `hourglass`, and related packages.
+* X.509 certificate handling is now built on `Crypto.BoringSSL.X509`.
+* New exports: `SignedCertificate(..)`, `Certificate(..)`, `DistinguishedName(..)`,
+  `getCertificate`, `validateDefault`, `FailedReason(..)`, `ServiceID`,
+  `Seed`, `seedToInteger`, `seedFromInteger`.
+* `ValidationCache` is now `type ValidationCache = ()` (validation is handled
+  via `onServerCertificate` hooks).
+* `X448` group removed (not supported by BoringSSL).
+* The `Network.TLS` module namespace is preserved for API compatibility.
 
 ## Version 2.2.2
 

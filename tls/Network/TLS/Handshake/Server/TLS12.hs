@@ -137,11 +137,11 @@ processClientKeyXchg ctx (CKX_RSA encryptedPreMain) = do
         (,,) <$> getVersion <*> getRole <*> genRandom 48
     ePreMain <- decryptRSA ctx encryptedPreMain
     expectedVer <- usingHState ctx $ gets hstClientVersion
+    -- RFC 5246 Section 7.4.7.1: on RSA decryption failure, silently
+    -- fall back to a random pre-master secret to prevent Bleichenbacher
+    -- oracle attacks. The random value was pre-generated above.
     mainSecret <- case ePreMain of
-        Left _ ->
-            -- BadRecordMac is nonsense but for tlsfuzzer
-            throwCore $
-                Error_Protocol "invalid client public key" BadRecordMac
+        Left _ -> usingHState ctx $ setMainSecretFromPre rver role random
         Right preMain -> case decodePreMainSecret preMain of
             Left _ -> usingHState ctx $ setMainSecretFromPre rver role random
             Right (ver, _)

@@ -47,7 +47,7 @@ module Network.TLS.Handshake.Common13 (
 
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict
-import qualified Data.ByteArray as BA
+import Crypto.BoringSSL.HMAC (constTimeEq)
 import qualified Data.ByteString as B
 import Data.UnixTime
 import Foreign.C.Types (CTime (..))
@@ -95,7 +95,7 @@ checkFinished ctx usedHash baseKey (TranscriptHash hashValue) vd@(VerifyData ver
     when (B.length verifyData /= B.length verifyData') $
         throwCore $
             Error_Protocol "broken Finished" DecodeError
-    unless (verifyData' == verifyData) $ decryptError "finished verification failed"
+    unless (constTimeEq verifyData' verifyData) $ decryptError "finished verification failed"
     liftIO $ usingState_ ctx $ setVerifyDataForRecv vd
 
 makeVerifyData :: Hash -> ByteString -> TranscriptHash -> ByteString
@@ -117,7 +117,7 @@ makeServerKeyShare ctx (KeyShareEntry grp wcpub) = case ecpub of
             Just (spub, share) ->
                 let wspub = IES.encodeGroupPublic spub
                     serverKeyShare = KeyShareEntry grp wspub
-                 in return (BA.convert share, serverKeyShare)
+                 in return (share, serverKeyShare)
   where
     ecpub = IES.decodeGroupPublic grp wcpub
     msgInvalidPublic = "invalid client " ++ show grp ++ " public key"
@@ -133,7 +133,7 @@ fromServerKeyShare :: KeyShareEntry -> IES.GroupPrivate -> IO ByteString
 fromServerKeyShare (KeyShareEntry grp wspub) cpri = case espub of
     Left e -> throwCore $ Error_Protocol (show e) IllegalParameter
     Right spub -> case IES.groupGetShared spub cpri of
-        Just shared -> return $ BA.convert shared
+        Just shared -> return $ shared
         Nothing ->
             throwCore $
                 Error_Protocol "cannot generate a shared secret on (EC)DH" IllegalParameter

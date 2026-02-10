@@ -61,23 +61,15 @@ module Network.TLS.Packet (
     getPRF,
 ) where
 
-import Data.ByteArray (ByteArrayAccess)
-import qualified Data.ByteArray as B (convert)
 import qualified Data.ByteString as B
-import Data.X509 (
-    CertificateChain,
-    CertificateChainRaw (..),
-    decodeCertificateChain,
-    encodeCertificateChain,
- )
 
 import Network.TLS.Crypto
 import Network.TLS.Imports
 import Network.TLS.MAC
 import Network.TLS.Struct
 import Network.TLS.Types
-import Network.TLS.Util.ASN1
 import Network.TLS.Wire
+import Network.TLS.X509 (CertificateChain, DistinguishedName (..), decodeCertificateChain, encodeCertificateChain)
 
 ----------------------------------------------------------------
 -- Header
@@ -247,11 +239,9 @@ decodeNewSessionTicket = NewSessionTicket <$> getWord32 <*> getOpaque16
 
 decodeCertificate :: Get Handshake
 decodeCertificate = do
-    certsRaw <-
-        CertificateChainRaw
-            <$> (getWord24 >>= \len -> getList (fromIntegral len) getCertRaw)
+    certsRaw <- getWord24 >>= \len -> getList (fromIntegral len) getCertRaw
     case decodeCertificateChain certsRaw of
-        Left (i, s) -> fail ("error certificate parsing " ++ show i ++ ":" ++ s)
+        Left s -> fail ("error certificate parsing: " ++ s)
         Right cc -> return $ Certificate $ CertificateChain_ cc
   where
     getCertRaw = getOpaque24 >>= \cert -> return (3 + B.length cert, cert)
@@ -411,27 +401,20 @@ encodeHandshake' (Finished (VerifyData opaque)) = runPut $ putBytes opaque
 getDNames :: Get [DistinguishedName]
 getDNames = do
     dNameLen <- getWord16
-    -- FIXME: Decide whether to remove this check completely or to make it an option.
-    -- when (cParamsVersion cp < TLS12 && dNameLen < 3) $ fail "certrequest distinguishname not of the correct size"
     getList (fromIntegral dNameLen) getDName
   where
     getDName = do
         dName <- getOpaque16
         when (B.length dName == 0) $ fail "certrequest: invalid DN length"
-        dn <-
-            either fail return $ decodeASN1Object "cert request DistinguishedName" dName
-        return (2 + B.length dName, dn)
+        return (2 + B.length dName, DistinguishedName dName)
 
 -- | Encode a list of distinguished names.
 putDNames :: [DistinguishedName] -> Put
 putDNames dnames = do
-    enc <- mapM encodeCA dnames
+    let enc = map (\(DistinguishedName der) -> der) dnames
     let totLength = sum $ map ((+) 2 . B.length) enc
     putWord16 (fromIntegral totLength)
     mapM_ (\b -> putWord16 (fromIntegral (B.length b)) >> putBytes b) enc
-  where
-    -- Convert a distinguished name to its DER encoding.
-    encodeCA dn = return $ encodeASN1Object dn
 
 ------------------------------------------------------------
 
@@ -567,36 +550,33 @@ getPRF ver ciph
     | otherwise = prf_TLS ver $ fromMaybe SHA256 $ cipherPRFHash ciph
 
 generateMainSecret_TLS
-    :: ByteArrayAccess preMain
-    => PRF
-    -> preMain
+    :: PRF
+    -> ByteString
     -> ClientRandom
     -> ServerRandom
     -> ByteString
 generateMainSecret_TLS prf preMainSecret (ClientRandom c) (ServerRandom s) =
-    prf (B.convert preMainSecret) seed 48
+    prf preMainSecret seed 48
   where
     seed = B.concat ["master secret", c, s]
 
 generateMainSecret
-    :: ByteArrayAccess preMain
-    => Version
+    :: Version
     -> Cipher
-    -> preMain
+    -> ByteString
     -> ClientRandom
     -> ServerRandom
     -> ByteString
 generateMainSecret v c = generateMainSecret_TLS $ getPRF v c
 
 generateExtendedMainSecret
-    :: ByteArrayAccess preMain
-    => Version
+    :: Version
     -> Cipher
-    -> preMain
+    -> ByteString
     -> ByteString
     -> ByteString
 generateExtendedMainSecret v c preMainSecret sessionHash =
-    getPRF v c (B.convert preMainSecret) seed 48
+    getPRF v c preMainSecret seed 48
   where
     seed = B.append "extended master secret" sessionHash
 
@@ -637,7 +617,7 @@ encodeSignedECDHParams dhparams cran sran =
 encodeCertificate :: CertificateChain -> ByteString
 encodeCertificate cc = runPut $ putOpaque24 (runPut $ mapM_ putOpaque24 certs)
   where
-    (CertificateChainRaw certs) = encodeCertificateChain cc
+    certs = encodeCertificateChain cc
 
 ------------------------------------------------------------
 

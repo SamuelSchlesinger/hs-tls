@@ -9,8 +9,7 @@ module Network.TLS.Handshake.Key (
     generateDHE,
     generateECDHE,
     generateECDHEShared,
-    generateFFDHE,
-    generateFFDHEShared,
+    findFiniteFieldGroup,
     versionCompatible,
     isDigitalSignaturePair,
     checkDigitalSignatureKey,
@@ -19,15 +18,16 @@ module Network.TLS.Handshake.Key (
     logKey,
 ) where
 
+import qualified Control.Exception as E
 import Control.Monad.State.Strict
 import qualified Data.ByteString as B
 
 import Network.TLS.Context.Internal
 import Network.TLS.Crypto
+import Network.TLS.Error
 import Network.TLS.Handshake.State
 import Network.TLS.Imports
 import Network.TLS.Parameters
-import Network.TLS.State (withRNG)
 import Network.TLS.Struct
 import Network.TLS.Types
 import Network.TLS.X509
@@ -38,67 +38,54 @@ import Network.TLS.X509
 encryptRSA :: Context -> ByteString -> IO ByteString
 encryptRSA ctx content = do
     publicKey <- usingHState ctx getRemotePublicKey
-    usingState_ ctx $ do
-        v <- withRNG $ kxEncrypt publicKey content
-        case v of
-            Left err -> error ("rsa encrypt failed: " ++ show err)
-            Right econtent -> return econtent
+    v <- kxEncrypt publicKey content
+    case v of
+        Left err -> E.throwIO $ Uncontextualized $ Error_Protocol ("rsa encrypt failed: " ++ show err) InternalError
+        Right econtent -> return econtent
 
 signPrivate :: Context -> Role -> SignatureParams -> ByteString -> IO ByteString
 signPrivate ctx _ params content = do
     (publicKey, privateKey) <- usingHState ctx getLocalPublicPrivateKeys
-    usingState_ ctx $ do
-        r <- withRNG $ kxSign privateKey publicKey params content
-        case r of
-            Left err -> error ("sign failed: " ++ show err)
-            Right econtent -> return econtent
+    r <- kxSign privateKey publicKey params content
+    case r of
+        Left err -> E.throwIO $ Uncontextualized $ Error_Protocol ("sign failed: " ++ show err) InternalError
+        Right econtent -> return econtent
 
 decryptRSA :: Context -> ByteString -> IO (Either KxError ByteString)
 decryptRSA ctx econtent = do
     (_, privateKey) <- usingHState ctx getLocalPublicPrivateKeys
-    usingState_ ctx $ do
-        let cipher = B.drop 2 econtent
-        withRNG $ kxDecrypt privateKey cipher
+    let cipher = B.drop 2 econtent
+    kxDecrypt privateKey cipher
 
 verifyPublic
     :: Context -> SignatureParams -> ByteString -> ByteString -> IO Bool
 verifyPublic ctx params econtent sign = do
     publicKey <- usingHState ctx getRemotePublicKey
-    return $ kxVerify publicKey params econtent sign
-
-generateDHE :: Context -> DHParams -> IO (DHPrivate, DHPublic)
-generateDHE ctx dhp = usingState_ ctx $ withRNG $ dhGenerateKeyPair dhp
+    kxVerify publicKey params econtent sign
 
 generateECDHE :: Context -> Group -> IO (GroupPrivate, GroupPublic)
-generateECDHE ctx grp = usingState_ ctx $ withRNG $ groupGenerateKeyPair grp
+generateECDHE _ctx grp = groupGenerateKeyPair grp
 
 generateECDHEShared
     :: Context -> GroupPublic -> IO (Maybe (GroupPublic, GroupKey))
-generateECDHEShared ctx pub = usingState_ ctx $ withRNG $ groupGetPubShared pub
+generateECDHEShared _ctx pub = groupGetPubShared pub
 
-generateFFDHE :: Context -> Group -> IO (DHParams, DHPrivate, DHPublic)
-generateFFDHE ctx grp = usingState_ ctx $ withRNG $ dhGroupGenerateKeyPair grp
+generateDHE :: Context -> DHParams -> IO (DHPrivate, DHPublic)
+generateDHE _ctx dhp = dhGenerateKeyPair dhp
 
-generateFFDHEShared
-    :: Context -> Group -> DHPublic -> IO (Maybe (DHPublic, DHKey))
-generateFFDHEShared ctx grp pub = usingState_ ctx $ withRNG $ dhGroupGetPubShared grp pub
+findFiniteFieldGroup :: DHParams -> Maybe Group
+findFiniteFieldGroup _params = Nothing
 
 {- FOURMOLU_DISABLE -}
 isDigitalSignatureKey :: PubKey -> Bool
 isDigitalSignatureKey (PubKeyRSA _)     = True
-isDigitalSignatureKey (PubKeyDSA _)     = True
-isDigitalSignatureKey (PubKeyEC _)      = True
+isDigitalSignatureKey (PubKeyEC _ _)    = True
 isDigitalSignatureKey (PubKeyEd25519 _) = True
-isDigitalSignatureKey (PubKeyEd448 _)   = True
-isDigitalSignatureKey _                 = False
 
 versionCompatible :: PubKey -> Version -> Bool
 versionCompatible (PubKeyRSA _) _     = True
-versionCompatible (PubKeyDSA _) v     = v <= TLS12
-versionCompatible (PubKeyEC _) v      = v >= TLS10
+versionCompatible (PubKeyEC _ _) v    = v >= TLS10
 versionCompatible (PubKeyEd25519 _) v = v >= TLS12
-versionCompatible (PubKeyEd448 _) v   = v >= TLS12
-versionCompatible _ _                 = False
 {- FOURMOLU_ENABLE -}
 
 -- | Test whether the argument is a public key supported for signature at the
@@ -123,10 +110,8 @@ isDigitalSignaturePair :: (PubKey, PrivKey) -> Bool
 isDigitalSignaturePair keyPair =
     case keyPair of
         (PubKeyRSA _, PrivKeyRSA _) -> True
-        (PubKeyDSA _, PrivKeyDSA _) -> True
-        (PubKeyEC _, PrivKeyEC k) -> kxSupportedPrivKeyEC k
+        (PubKeyEC _ _, PrivKeyEC c _) -> kxSupportedPrivKeyEC c
         (PubKeyEd25519 _, PrivKeyEd25519 _) -> True
-        (PubKeyEd448 _, PrivKeyEd448 _) -> True
         _ -> False
 
 getLocalPublicKey :: MonadIO m => Context -> m PubKey
@@ -137,8 +122,8 @@ getLocalPublicKey ctx =
 -- When the public key is not suitable for ECDSA, like RSA for instance, the
 -- predicate is not used and the result is 'True'.
 satisfiesEcPredicate :: (Group -> Bool) -> PubKey -> Bool
-satisfiesEcPredicate p (PubKeyEC ecPub) =
-    maybe False p $ findEllipticCurveGroup ecPub
+satisfiesEcPredicate p (PubKeyEC curve _) =
+    maybe False p $ findEllipticCurveGroup curve
 satisfiesEcPredicate _ _ = True
 
 ----------------------------------------------------------------

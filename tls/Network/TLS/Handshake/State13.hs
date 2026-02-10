@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.TLS.Handshake.State13 (
@@ -142,9 +143,8 @@ setPendingRecvActions :: Context -> [PendingRecvAction] -> IO ()
 setPendingRecvActions ctx = writeIORef (ctxPendingRecvActions ctx)
 
 popPendingRecvAction :: Context -> IO (Maybe PendingRecvAction)
-popPendingRecvAction ctx = do
-    let ref = ctxPendingRecvActions ctx
-    actions <- readIORef ref
-    case actions of
-        bs : bss -> writeIORef ref bss >> return (Just bs)
-        [] -> return Nothing
+popPendingRecvAction ctx = atomicModifyIORef' ref $ \case
+    bs : bss -> (bss, Just bs)
+    [] -> ([], Nothing)
+  where
+    ref = ctxPendingRecvActions ctx

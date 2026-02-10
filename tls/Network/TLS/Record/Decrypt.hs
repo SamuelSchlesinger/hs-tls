@@ -5,9 +5,11 @@ module Network.TLS.Record.Decrypt (
 ) where
 
 import Control.Monad.State.Strict
-import Crypto.Cipher.Types (AuthTag (..))
-import qualified Data.ByteArray as B (convert, xor)
 import qualified Data.ByteString as B
+
+import Crypto.BoringSSL.HMAC (constTimeEq)
+
+import Network.TLS.Crypto.BoringCompat (bsXor)
 
 import Network.TLS.Cipher
 import Network.TLS.Crypto
@@ -66,7 +68,7 @@ getCipherData (Record pt ver _) cdata = do
         Just digest -> do
             let new_hdr = Header pt ver (fromIntegral $ B.length $ cipherDataContent cdata)
             expected_digest <- makeDigest new_hdr $ cipherDataContent cdata
-            return (expected_digest == digest)
+            return (constTimeEq expected_digest digest)
 
     -- check if the padding is filled with the correct pattern if it exists
     -- (before TLS10 this checks instead that the padding length is minimal)
@@ -74,7 +76,7 @@ getCipherData (Record pt ver _) cdata = do
         Nothing -> return True
         Just (pad, _blksz) -> do
             let b = B.length pad - 1
-            return $ B.replicate (B.length pad) (fromIntegral b) == pad
+            return $ constTimeEq (B.replicate (B.length pad) (fromIntegral b)) pad
 
     unless (macValid &&! paddingValid) $
         throwError $
@@ -180,11 +182,12 @@ decryptData ver record econtent tst lim =
                 | otherwise = B.concat [encodedSeq, encodeHeader hdr]
             sqnc = B.replicate (ivlen - 8) 0 `B.append` encodedSeq
             nonce
-                | nonceExpLen == 0 = B.xor iv sqnc
+                | nonceExpLen == 0 = bsXor iv sqnc
                 | otherwise = iv `B.append` enonce
-            (content, authTag2) = decryptF nonce econtent' ad
+            (content, authTag2) = decryptF nonce (econtent' `B.append` authTag) ad
 
-        when (AuthTag (B.convert authTag) /= authTag2) $
+        let AuthTag authTag2Bytes = authTag2
+        when (not $ constTimeEq authTag authTag2Bytes) $
             throwError $
                 Error_Protocol "bad record mac on AEAD" BadRecordMac
 

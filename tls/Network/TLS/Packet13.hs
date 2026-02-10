@@ -14,9 +14,8 @@ import Codec.Compression.Zlib
 import qualified Control.Exception as E
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import Data.X509 (
+import Network.TLS.X509 (
     CertificateChain,
-    CertificateChainRaw (..),
     decodeCertificateChain,
     encodeCertificateChain,
  )
@@ -95,7 +94,7 @@ encodeCertificate13 reqctx cc ess = runPut $ do
     putOpaque8 reqctx
     putOpaque24 (runPut $ mapM_ putCert $ zip certs ess)
   where
-    CertificateChainRaw certs = encodeCertificateChain cc
+    certs = encodeCertificateChain cc
     putCert (certRaw, exts) = do
         putOpaque24 certRaw
         putExtensions exts
@@ -105,7 +104,7 @@ encodeCertificate13 reqctx cc ess = runPut $ do
 decodeHandshakes13 :: MonadError TLSError m => ByteString -> m [Handshake13]
 decodeHandshakes13 bs = case decodeHandshakeRecord13 bs of
     GotError err -> throwError err
-    GotPartial _cont -> error "decodeHandshakes13"
+    GotPartial _cont -> throwError $ Error_Packet "partial handshake message in decodeHandshakes13"
     GotSuccess (ty, content) -> case decodeHandshake13 ty content of
         Left e -> throwError e
         Right h -> return [h]
@@ -176,8 +175,8 @@ decodeCertificate13 = do
     reqctx <- getOpaque8
     len <- fromIntegral <$> getWord24
     (certRaws, ess) <- unzip <$> getList len getCert
-    case decodeCertificateChain $ CertificateChainRaw certRaws of
-        Left (i, s) -> fail ("error certificate parsing " ++ show i ++ ":" ++ s)
+    case decodeCertificateChain certRaws of
+        Left s -> fail ("error certificate parsing: " ++ s)
         Right cc -> return $ Certificate13 reqctx (CertificateChain_ cc) ess
   where
     getCert = do
@@ -209,11 +208,18 @@ decodeKeyUpdate13 = do
         1 -> return $ KeyUpdate13 UpdateRequested
         x -> fail $ "Unknown request_update: " ++ show x
 
+-- | Maximum allowed uncompressed certificate size (256KB).
+-- Prevents decompression bombs from consuming excessive memory.
+maxDecompressedCertSize :: Int
+maxDecompressedCertSize = 262144
+
 decodeCompressedCertificate13 :: Get Handshake13
 decodeCompressedCertificate13 = do
     algo <- getWord16
     when (algo /= 1) $ fail "comp algo is not supported" -- fixme
     len <- getWord24
+    when (len > maxDecompressedCertSize) $
+        fail $ "compressed certificate claims excessive size: " ++ show len
     bs <- getOpaque24
     if bs == ""
         then fail "empty compressed certificate"

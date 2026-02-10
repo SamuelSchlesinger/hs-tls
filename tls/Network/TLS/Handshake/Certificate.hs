@@ -9,7 +9,7 @@ module Network.TLS.Handshake.Certificate (
 import Control.Exception (SomeException)
 import Control.Monad (unless)
 import Control.Monad.State.Strict
-import Data.X509 (ExtKeyUsage (..), ExtKeyUsageFlag, extensionGet)
+import Network.TLS.X509 (ExtKeyUsageFlag)
 
 import Network.TLS.Context.Internal
 import Network.TLS.Struct
@@ -43,9 +43,9 @@ verifyLeafKeyUsage validFlags (CertificateChain (signed : _)) =
   where
     cert = getCertificate signed
     verified =
-        case extensionGet (certExtensions cert) of
+        case certKeyUsageFlags cert of
             Nothing -> True -- unrestricted cert
-            Just (ExtKeyUsage flags) -> any (`elem` validFlags) flags
+            Just flags -> any (`elem` validFlags) flags
 
 extractCAname :: SignedCertificate -> DistinguishedName
 extractCAname cert = certSubjectDN $ getCertificate cert

@@ -229,12 +229,9 @@ getCKX_DHE cparams ctx = do
                 return (clientDHPub, preMain)
             Just grp -> do
                 usingHState ctx $ setSupportedGroup grp
-                dhePair <- generateFFDHEShared ctx grp srvpub
-                case dhePair of
-                    Nothing ->
-                        throwCore $
-                            Error_Protocol ("invalid server " ++ show grp ++ " public key") IllegalParameter
-                    Just pair -> return pair
+                -- FFDHE groups are no longer supported
+                throwCore $
+                    Error_Protocol ("FFDHE group " ++ show grp ++ " is not supported") HandshakeFailure
 
     let setMainSec = setMainSecretFromPre xver ClientRole preMain
     return (CKX_DH clientDHPub, setMainSec)

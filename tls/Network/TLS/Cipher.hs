@@ -2,6 +2,7 @@
 {-# OPTIONS_HADDOCK hide #-}
 
 module Network.TLS.Cipher (
+    AuthTag (..),
     CipherKeyExchangeType (..),
     Bulk (..),
     BulkFunctions (..),

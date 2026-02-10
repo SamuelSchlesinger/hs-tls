@@ -6,7 +6,6 @@ module Main where
 
 import Data.IORef
 import qualified Data.Map.Strict as M
-import Data.X509.CertificateStore
 import Network.Run.TCP
 import Network.TLS
 import Network.TLS.ECH.Config
@@ -15,7 +14,6 @@ import System.Console.GetOpt
 import System.Environment (getArgs)
 import System.Exit
 import System.IO
-import System.X509
 
 import Common
 import Imports

@@ -45,7 +45,15 @@ data SessionData = SessionData
     , sessionMaxEarlyDataSize :: Int
     , sessionFlags :: [SessionFlag]
     } -- sessionFromTicket :: Bool
-    deriving (Show, Eq, Generic)
+    deriving (Eq, Generic)
+
+instance Show SessionData where
+    show sd = "SessionData {sessionVersion = " ++ show (sessionVersion sd)
+        ++ ", sessionCipher = " ++ show (sessionCipher sd)
+        ++ ", sessionSecret = <redacted " ++ show (B.length (sessionSecret sd)) ++ " bytes>"
+        ++ ", sessionGroup = " ++ show (sessionGroup sd)
+        ++ ", sessionFlags = " ++ show (sessionFlags sd)
+        ++ "}"
 
 is0RTTPossible :: SessionData -> Bool
 is0RTTPossible sd = sessionMaxEarlyDataSize sd > 0

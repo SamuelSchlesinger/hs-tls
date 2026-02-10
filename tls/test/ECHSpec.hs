@@ -31,7 +31,6 @@ spec = do
         prop "can handshake with TLS 1.3 0RTT" handshake13_0rtt
         prop "can handshake with TLS 1.3 0RTT -> PSK" handshake13_0rtt_fallback
         prop "can handshake with TLS 1.3 EC groups" handshake13_ec
-        prop "can handshake with TLS 1.3 FFDHE groups" handshake13_ffdhe
     describe "ECH greasing" $ do
         prop "sends greasing ECH" handshake13_greasing
         prop "sends greasing ECH HRR" handshake13_greasing_hrr
@@ -154,7 +153,7 @@ handshake13_psk_fallback (CSP13 (cli, srv)) = do
             defaultSupported
                 { supportedCiphers =
                     [ cipher13_AES_128_GCM_SHA256
-                    , cipher13_AES_128_CCM_SHA256
+                    , cipher13_CHACHA20_POLY1305_SHA256
                     ]
                 , supportedGroups = [P256, X25519]
                 }
@@ -185,7 +184,7 @@ handshake13_psk_fallback (CSP13 (cli, srv)) = do
         srv2' = srv2{serverSupported = svrSupported'}
         svrSupported' =
             defaultSupported
-                { supportedCiphers = [cipher13_AES_128_CCM_SHA256]
+                { supportedCiphers = [cipher13_CHACHA20_POLY1305_SHA256]
                 , supportedGroups = [P256]
                 }
 
@@ -204,7 +203,7 @@ handshake13_0rtt (CSP13 (cli, srv)) = do
                 , supportedGroups = [X25519]
                 }
         cliHooks =
-            defaultClientHooks
+            (clientHooks cli)
                 { onSuggestALPN = return $ Just ["h2"]
                 }
         svrHooks =
@@ -318,19 +317,6 @@ handshake13_ec :: CSP13 -> IO ()
 handshake13_ec (CSP13 (cli, srv)) = do
     EC cgrps <- generate arbitrary
     EC sgrps <- generate arbitrary
-    let cliSupported = (clientSupported cli){supportedGroups = cgrps}
-        svrSupported = (serverSupported srv){supportedGroups = sgrps}
-        params =
-            setParams
-                ( cli{clientSupported = cliSupported}
-                , srv{serverSupported = svrSupported}
-                )
-    runTLSSimple13ECH params FullHandshake
-
-handshake13_ffdhe :: CSP13 -> IO ()
-handshake13_ffdhe (CSP13 (cli, srv)) = do
-    FFDHE cgrps <- generate arbitrary
-    FFDHE sgrps <- generate arbitrary
     let cliSupported = (clientSupported cli){supportedGroups = cgrps}
         svrSupported = (serverSupported srv){supportedGroups = sgrps}
         params =

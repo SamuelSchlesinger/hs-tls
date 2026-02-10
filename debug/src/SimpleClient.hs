@@ -3,13 +3,11 @@
 
 import Control.Exception (SomeException (..))
 import qualified Control.Exception as E
-import Crypto.Random
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Default (def)
 import Data.IORef
-import Data.X509.CertificateStore
 import Network.Socket (PortNumber, close, connect, socket)
 import System.Console.GetOpt
 import System.Environment
@@ -101,11 +99,14 @@ getDefaultParams flags host store sStorage certCredsRequest session earlyData =
             def
                 { sharedSessionManager = sessionRef sStorage
                 , sharedCAStore = store
-                , sharedValidationCache = validateCache
                 }
         , clientHooks =
             def
                 { onCertificateRequest = fromMaybe (onCertificateRequest def) certCredsRequest
+                , onServerCertificate =
+                    if validateCert
+                        then onServerCertificate def
+                        else \_ _ _ _ -> return []
                 }
         , clientDebug =
             def
@@ -123,12 +124,6 @@ getDefaultParams flags host store sStorage certCredsRequest session earlyData =
         f _ (SNI n) = n
         f acc _ = acc
 
-    validateCache
-        | validateCert = def
-        | otherwise =
-            ValidationCache
-                (\_ _ _ -> return ValidationCachePass)
-                (\_ _ _ -> return ())
     myCiphers = foldl accBogusCipher getSelectedCiphers flags
       where
         accBogusCipher acc (BogusCipher c) =

@@ -5,6 +5,9 @@ packages:
   debug
   test-scripts
 
+optional-packages:
+  ../boringssl
+
 test-show-details: direct
 
 tests: True

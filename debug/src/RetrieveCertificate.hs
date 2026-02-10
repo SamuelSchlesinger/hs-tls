@@ -1,18 +1,20 @@
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 
 import Control.Exception
-import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Base16 as BS16
 import Data.Default (def)
 import Data.IORef
-import Data.PEM
-import Data.X509 as X509
-import Data.X509.Validation
 import Network.Socket
 import System.Console.GetOpt
 import System.Environment
 import System.Exit
-import System.X509
 import Text.Printf
+
+import qualified Crypto.BoringSSL.Digest as Digest
+import qualified Crypto.BoringSSL.PEM as PEM
+import qualified Crypto.BoringSSL.X509 as BX509
 
 import Network.TLS
 import Network.TLS.Extra.Cipher
@@ -22,13 +24,15 @@ import Imports
 openConnection :: String -> String -> IO CertificateChain
 openConnection s p = do
     ref <- newIORef Nothing
+    let hooks =
+            def{onServerCertificate = \_ _ _ _ -> return []}
     let params =
-            (defaultParamsClient s (B.pack p))
+            (defaultParamsClient s (B8.pack p))
                 { clientSupported = def{supportedCiphers = ciphersuite_all}
-                , clientShared = def{sharedValidationCache = noValidate}
+                , clientShared = def
+                , clientHooks = hooks
                 }
 
-    -- ctx <- connectionClient s p params rng
     let hints = defaultHints{addrSocketType = Stream}
     addr : _ <- getAddrInfo (Just hints) (Just s) (Just p)
 
@@ -48,11 +52,6 @@ openConnection s p = do
     case r of
         Nothing -> error "cannot retrieve any certificate"
         Just certs -> return certs
-  where
-    noValidate =
-        ValidationCache
-            (\_ _ _ -> return ValidationCachePass)
-            (\_ _ _ -> return ())
 
 data Flag
     = PrintChain
@@ -89,28 +88,30 @@ options =
     , Option ['h'] ["help"] (NoArg Help) "request help"
     ]
 
-showCert :: String -> SignedExact Certificate -> IO ()
-showCert "pem" cert = B.putStrLn $ pemWriteBS pem
+showCert :: String -> SignedCertificate -> IO ()
+showCert "pem" sc = case PEM.pemEncode "CERTIFICATE" (scDER sc) of
+    Right pemBS -> B8.putStrLn pemBS
+    Left err -> putStrLn ("error encoding PEM: " ++ show err)
+showCert "full" sc = do
+    let cert = scCert sc
+    putStrLn ("serial:   " ++ BX509.serialNumberHex cert)
+    putStrLn ("issuer:   " ++ BX509.issuerName cert)
+    putStrLn ("subject:  " ++ BX509.subjectName cert)
+    putStrLn ("validity: " ++ showValidity cert)
+    putStrLn ("DER size: " ++ show (B.length (scDER sc)) ++ " bytes")
+showCert _ sc = do
+    let cert = scCert sc
+    putStrLn ("serial:   " ++ BX509.serialNumberHex cert)
+    putStrLn ("issuer:   " ++ show (certIssuerDN (getCertificate sc)))
+    putStrLn ("subject:  " ++ show (certSubjectDN (getCertificate sc)))
+    putStrLn ("validity: " ++ showValidity cert)
+
+showValidity :: BX509.X509Cert -> String
+showValidity cert =
+    showTime (BX509.notBefore cert) ++ " to " ++ showTime (BX509.notAfter cert)
   where
-    pem =
-        PEM
-            { pemName = "CERTIFICATE"
-            , pemHeader = []
-            , pemContent = encodeSignedObject cert
-            }
-showCert "full" cert = print cert
-showCert _ signedCert = do
-    putStrLn ("serial:   " ++ show (certSerial cert))
-    putStrLn ("issuer:   " ++ show (certIssuerDN cert))
-    putStrLn ("subject:  " ++ show (certSubjectDN cert))
-    putStrLn
-        ( "validity: "
-            ++ show (fst $ certValidity cert)
-            ++ " to "
-            ++ show (snd $ certValidity cert)
-        )
-  where
-    cert = getCertificate signedCert
+    showTime (Right t) = show t
+    showTime (Left _) = "(unknown)"
 
 printUsage :: IO ()
 printUsage =
@@ -118,6 +119,9 @@ printUsage =
         usageInfo
             "usage: retrieve-certificate [opts] <hostname> [port]\n\n\t(port default to: 443)\noptions:\n"
             options
+
+fingerprintHex :: ByteString -> String
+fingerprintHex bs = B8.unpack (BS16.encode bs)
 
 main :: IO ()
 main = do
@@ -159,27 +163,25 @@ main = do
 
         let fingerprints = foldl (doFingerprint (head certs)) [] opts
         unless (null fingerprints) $ putStrLn "Fingerprints:"
-        mapM_ (\(alg, fprint) -> putStrLn ("  " ++ alg ++ " = " ++ show fprint)) $
+        mapM_ (\(alg, fprint) -> putStrLn ("  " ++ alg ++ " = " ++ fprint)) $
             concat fingerprints
 
         when (Verify `elem` opts) $ do
             store <- getSystemCertificateStore
             putStrLn "### certificate chain trust"
-            let checks =
-                    defaultChecks
-                        { checkExhaustive = True
-                        , checkFQHN = isJust fqdn
-                        }
-                servId = (fromMaybe "" fqdn, B.empty)
-            reasons <- validate X509.HashSHA256 def checks store def servId chain
-            unless (null reasons) $ do
-                putStrLn "fail validation:"
-                print reasons
+            let servId = (fromMaybe "" fqdn, B.empty)
+            reasons <- validateDefault store () servId chain
+            if null reasons
+                then putStrLn "chain is valid"
+                else do
+                    putStrLn "fail validation:"
+                    print reasons
 
-    doFingerprint cert acc GetFingerprint =
-        [ ("SHA1", getFingerprint cert X509.HashSHA1)
-        , ("SHA256", getFingerprint cert X509.HashSHA256)
-        , ("SHA512", getFingerprint cert X509.HashSHA512)
-        ]
-            : acc
+    doFingerprint sc acc GetFingerprint =
+        let der = scDER sc
+        in  [ ("SHA1", fingerprintHex (Digest.hashSHA1 der))
+            , ("SHA256", fingerprintHex (Digest.hashSHA256 der))
+            , ("SHA512", fingerprintHex (Digest.hashSHA512 der))
+            ]
+                : acc
     doFingerprint _ acc _ = acc

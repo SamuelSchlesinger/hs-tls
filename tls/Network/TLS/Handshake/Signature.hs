@@ -36,15 +36,12 @@ decryptError :: MonadIO m => String -> m a
 decryptError msg = throwCore $ Error_Protocol msg DecryptError
 
 -- | Check that the key is compatible with a list of 'CertificateType' values.
--- Ed25519 and Ed448 have no assigned code point and are checked with extension
+-- Ed25519 has no assigned code point and is checked with extension
 -- "signature_algorithms" only.
 certificateCompatible :: PubKey -> [CertificateType] -> Bool
 certificateCompatible (PubKeyRSA _) cTypes = CertificateType_RSA_Sign `elem` cTypes
-certificateCompatible (PubKeyDSA _) cTypes = CertificateType_DSA_Sign `elem` cTypes
-certificateCompatible (PubKeyEC _) cTypes = CertificateType_ECDSA_Sign `elem` cTypes
+certificateCompatible (PubKeyEC _ _) cTypes = CertificateType_ECDSA_Sign `elem` cTypes
 certificateCompatible (PubKeyEd25519 _) _ = True
-certificateCompatible (PubKeyEd448 _) _ = True
-certificateCompatible _ _ = False
 
 signatureCompatible :: PubKey -> HashAndSignatureAlgorithm -> Bool
 signatureCompatible (PubKeyRSA pk) (HashSHA1, SignatureRSA) = kxCanUseRSApkcs1 pk SHA1
@@ -54,17 +51,15 @@ signatureCompatible (PubKeyRSA pk) (HashSHA512, SignatureRSA) = kxCanUseRSApkcs1
 signatureCompatible (PubKeyRSA pk) (_, SignatureRSApssRSAeSHA256) = kxCanUseRSApss pk SHA256
 signatureCompatible (PubKeyRSA pk) (_, SignatureRSApssRSAeSHA384) = kxCanUseRSApss pk SHA384
 signatureCompatible (PubKeyRSA pk) (_, SignatureRSApssRSAeSHA512) = kxCanUseRSApss pk SHA512
-signatureCompatible (PubKeyDSA _) (_, SignatureDSA) = True
-signatureCompatible (PubKeyEC _) (_, SignatureECDSA) = True
+signatureCompatible (PubKeyEC _ _) (_, SignatureECDSA) = True
 signatureCompatible (PubKeyEd25519 _) (_, SignatureEd25519) = True
-signatureCompatible (PubKeyEd448 _) (_, SignatureEd448) = True
 signatureCompatible _ (_, _) = False
 
 -- Same as 'signatureCompatible' but for TLS13: for ECDSA this also checks the
 -- relation between hash in the HashAndSignatureAlgorithm and elliptic curve
 signatureCompatible13 :: PubKey -> HashAndSignatureAlgorithm -> Bool
-signatureCompatible13 (PubKeyEC ecPub) (h, SignatureECDSA) =
-    maybe False (\g -> findEllipticCurveGroup ecPub == Just g) (hashCurve h)
+signatureCompatible13 (PubKeyEC curve _) (h, SignatureECDSA) =
+    maybe False (\g -> findEllipticCurveGroup curve == Just g) (hashCurve h)
   where
     hashCurve HashSHA256 = Just P256
     hashCurve HashSHA384 = Just P384
@@ -168,13 +163,7 @@ signatureParams (PubKeyRSA _) hashSigAlg =
         (hsh, SignatureRSA) -> error ("unimplemented RSA signature hash type: " ++ show hsh)
         (_, sigAlg) ->
             error ("signature algorithm is incompatible with RSA: " ++ show sigAlg)
-signatureParams (PubKeyDSA _) hashSigAlg =
-    case hashSigAlg of
-        (HashSHA1, SignatureDSA) -> DSAParams
-        (_, SignatureDSA) -> error "invalid DSA hash choice, only SHA1 allowed"
-        (_, sigAlg) ->
-            error ("signature algorithm is incompatible with DSA: " ++ show sigAlg)
-signatureParams (PubKeyEC _) hashSigAlg =
+signatureParams (PubKeyEC _ _) hashSigAlg =
     case hashSigAlg of
         (HashSHA512, SignatureECDSA) -> ECDSAParams SHA512
         (HashSHA384, SignatureECDSA) -> ECDSAParams SHA384
@@ -189,13 +178,6 @@ signatureParams (PubKeyEd25519 _) hashSigAlg =
         (hsh, SignatureEd25519) -> error ("unimplemented Ed25519 signature hash type: " ++ show hsh)
         (_, sigAlg) ->
             error ("signature algorithm is incompatible with Ed25519: " ++ show sigAlg)
-signatureParams (PubKeyEd448 _) hashSigAlg =
-    case hashSigAlg of
-        (HashIntrinsic, SignatureEd448) -> Ed448Params
-        (hsh, SignatureEd448) -> error ("unimplemented Ed448 signature hash type: " ++ show hsh)
-        (_, sigAlg) ->
-            error ("signature algorithm is incompatible with Ed448: " ++ show sigAlg)
-signatureParams pk _ = error ("signatureParams: " ++ pubkeyType pk ++ " is not supported")
 
 signatureCreateWithCertVerifyData
     :: Context

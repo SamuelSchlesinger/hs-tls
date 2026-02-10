@@ -255,7 +255,6 @@ defaultSupported =
         , supportedCiphers =
             [ cipher13_AES_256_GCM_SHA384
             , cipher13_AES_128_GCM_SHA256
-            , cipher13_AES_128_CCM_SHA256
             ]
         , supportedGroups = [X25519, X448, P256, P384, P521]
         }

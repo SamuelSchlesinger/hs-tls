@@ -6,8 +6,6 @@ import Certificate
 import Control.Concurrent.Chan
 import Data.Default (def)
 import Data.IORef
-import Data.X509
-import Data.X509.Validation
 import Test.Tasty.Bench
 import Network.TLS
 import Network.TLS.Extra.Cipher
@@ -49,28 +47,24 @@ getParams connectVer cipher = (cParams, sParams)
                 def
                     { sharedCredentials =
                         Credentials
-                            [(CertificateChain [simpleX509 $ PubKeyRSA pubKey], PrivKeyRSA privKey)]
+                            [(CertificateChain [simpleX509 (PrivKeyRSA privKey)], PrivKeyRSA privKey)]
                     }
             }
     cParams =
         (defaultParamsClient "" B.empty)
             { clientSupported = supported
-            , clientShared =
+            , clientHooks =
                 def
-                    { sharedValidationCache =
-                        ValidationCache
-                            { cacheAdd = \_ _ _ -> return ()
-                            , cacheQuery = \_ _ _ -> return ValidationCachePass
-                            }
+                    { onServerCertificate = \_ _ _ _ -> return []
                     }
             }
     supported =
         def
             { supportedCiphers = [cipher]
             , supportedVersions = [connectVer]
-            , supportedGroups = [X25519, FFDHE2048]
+            , supportedGroups = [X25519]
             }
-    (pubKey, privKey) = getGlobalRSAPair
+    privKey = getGlobalRSAPair
 
 runTLSPipe
     :: (ClientParams, ServerParams)
@@ -164,10 +158,7 @@ main =
             "TLS12"
             TLS12
             large
-            [ cipher_DHE_RSA_WITH_AES_128_GCM_SHA256
-            , cipher_DHE_RSA_WITH_AES_256_GCM_SHA384
-            , cipher_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256
-            , cipher_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            [ cipher_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             , cipher_ECDHE_RSA_WITH_AES_256_GCM_SHA384
             , cipher_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
             ]
@@ -178,8 +169,6 @@ main =
             [ cipher13_AES_128_GCM_SHA256
             , cipher13_AES_256_GCM_SHA384
             , cipher13_CHACHA20_POLY1305_SHA256
-            , cipher13_AES_128_CCM_SHA256
-            , cipher13_AES_128_CCM_8_SHA256
             ]
         ]
   where

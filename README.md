@@ -1,16 +1,19 @@
-![GitHub Actions status](https://github.com/haskell-tls/hs-tls/workflows/Haskell%20CI/badge.svg)
+# boring-tls
 
-# Haskell TLS
+A native Haskell TLS 1.2/1.3 implementation backed by [boringssl-hs](https://github.com/nickvdijk/boringssl-hs) for cryptographic operations.
 
-* `tls` :: library for TLS 1.2/1.3 server and client purely in Haskell
-* `tls-session-manager` :: library for in-memory session DB and session ticket.
+## Packages
 
-If the `devel` flag is specified to `tls`, `tls-client` and `tls-server` are also built.
+* `boring-tls` :: TLS 1.2/1.3 library for servers and clients, using BoringSSL
+* `tls-session-manager` :: in-memory session DB and session ticket management
+* `tls-debug` :: debugging and testing utilities
+
+If the `devel` flag is specified to `boring-tls`, `tls-client` and `tls-server` are also built.
 
 ## Usage of `tls-client`
 
 ```
-Usage: quic-client [OPTION] addr port [path]
+Usage: tls-client [OPTION] addr port [path]
   -d           --debug                print debug info
   -v           --show-content         print downloaded content
   -l <file>    --key-log-file=<file>  a file to store negotiated secrets
@@ -22,7 +25,7 @@ Usage: quic-client [OPTION] addr port [path]
   -2           --tls12                use TLS 1.2
   -3           --tls13                use TLS 1.3
 
-  <groups> = ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192,p256,p384,p521,x25519,x448
+  <groups> = ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192,p256,p384,p521,x25519
 ```
 
 ### TLS 1.3 full negotiation

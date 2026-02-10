@@ -13,7 +13,6 @@ import qualified Data.ByteString.Char8 as C8
 import Data.IORef
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.X509.CertificateStore
 import Network.Run.TCP
 import Network.Socket
 import Network.TLS hiding (is0RTTPossible)
@@ -22,7 +21,6 @@ import Network.TLS.Internal (makeCipherShowPretty)
 import System.Console.GetOpt
 import System.Environment
 import System.Exit
-import System.X509
 
 import Client
 import Common
@@ -410,8 +408,7 @@ getClientParams Options{..} serverName port sm mstore onCertReq echConfList prin
     shared =
         defaultShared
             { sharedSessionManager = sm
-            , sharedCAStore = fromMaybe mempty mstore
-            , sharedValidationCache = validateCache
+            , sharedCAStore = fromMaybe emptyCertificateStore mstore
             , sharedLimit =
                 defaultLimit
                     { limitRecordSize = Just 8192
@@ -427,13 +424,11 @@ getClientParams Options{..} serverName port sm mstore onCertReq echConfList prin
         defaultClientHooks
             { onSuggestALPN = return $ Just [C8.pack optALPN]
             , onCertificateRequest = onCertReq
+            , onServerCertificate =
+                if isJust mstore
+                    then onServerCertificate defaultClientHooks
+                    else \_ _ _ _ -> return []
             }
-    validateCache
-        | isJust mstore = sharedValidationCache defaultShared
-        | otherwise =
-            ValidationCache
-                (\_ _ _ -> return ValidationCachePass)
-                (\_ _ _ -> return ())
     debug =
         defaultDebugParams
             { debugKeyLogger = getLogger optKeyLogFile

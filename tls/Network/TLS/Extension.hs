@@ -111,7 +111,7 @@ import qualified Control.Exception as E
 import Crypto.HPKE
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
-import Data.X509 (DistinguishedName)
+import Network.TLS.X509 (DistinguishedName)
 
 import Network.TLS.ECH.Config
 
@@ -469,7 +469,7 @@ instance Extension ServerName where
     extensionDecode MsgTClientHello = decodeServerName
     extensionDecode MsgTServerHello = decodeServerName
     extensionDecode MsgTEncryptedExtensions = decodeServerName
-    extensionDecode _ = error "extensionDecode: ServerName"
+    extensionDecode _ = const Nothing
 
 decodeServerName :: ByteString -> Maybe ServerName
 decodeServerName "" = Just $ ServerName [] -- dirty hack for servers
@@ -521,7 +521,7 @@ instance Extension MaxFragmentLength where
     extensionDecode MsgTClientHello = decodeMaxFragmentLength
     extensionDecode MsgTServerHello = decodeMaxFragmentLength
     extensionDecode MsgTEncryptedExtensions = decodeMaxFragmentLength
-    extensionDecode _ = error "extensionDecode: MaxFragmentLength"
+    extensionDecode _ = const Nothing
 
 decodeMaxFragmentLength :: ByteString -> Maybe MaxFragmentLength
 decodeMaxFragmentLength = runGetMaybe $ toMaxFragmentEnum <$> getWord8
@@ -542,7 +542,7 @@ instance Extension SupportedGroups where
     extensionEncode (SupportedGroups groups) = runPut $ putWords16 $ map (\(Group g) -> g) groups
     extensionDecode MsgTClientHello = decodeSupportedGroups
     extensionDecode MsgTEncryptedExtensions = decodeSupportedGroups
-    extensionDecode _ = error "extensionDecode: SupportedGroups"
+    extensionDecode _ = const Nothing
 
 decodeSupportedGroups :: ByteString -> Maybe SupportedGroups
 decodeSupportedGroups =
@@ -577,7 +577,7 @@ instance Extension EcPointFormatsSupported where
     extensionEncode (EcPointFormatsSupported formats) = runPut $ putWords8 $ map fromEcPointFormat formats
     extensionDecode MsgTClientHello = decodeEcPointFormatsSupported
     extensionDecode MsgTServerHello = decodeEcPointFormatsSupported
-    extensionDecode _ = error "extensionDecode: EcPointFormatsSupported"
+    extensionDecode _ = const Nothing
 
 decodeEcPointFormatsSupported :: ByteString -> Maybe EcPointFormatsSupported
 decodeEcPointFormatsSupported =
@@ -596,7 +596,7 @@ instance Extension SignatureAlgorithms where
                 >> mapM_ putSignatureHashAlgorithm algs
     extensionDecode MsgTClientHello = decodeSignatureAlgorithms
     extensionDecode MsgTCertificateRequest = decodeSignatureAlgorithms
-    extensionDecode _ = error "extensionDecode: SignatureAlgorithms"
+    extensionDecode _ = const Nothing
 
 decodeSignatureAlgorithms :: ByteString -> Maybe SignatureAlgorithms
 decodeSignatureAlgorithms = runGetMaybe $ do
@@ -632,7 +632,7 @@ instance Extension HeartBeat where
     extensionEncode (HeartBeat mode) = runPut $ putWord8 $ fromHeartBeatMode mode
     extensionDecode MsgTClientHello = decodeHeartBeat
     extensionDecode MsgTServerHello = decodeHeartBeat
-    extensionDecode _ = error "extensionDecode: HeartBeat"
+    extensionDecode _ = const Nothing
 
 decodeHeartBeat :: ByteString -> Maybe HeartBeat
 decodeHeartBeat = runGetMaybe $ HeartBeat . HeartBeatMode <$> getWord8
@@ -651,7 +651,7 @@ instance Extension ApplicationLayerProtocolNegotiation where
     extensionDecode MsgTClientHello = decodeApplicationLayerProtocolNegotiation
     extensionDecode MsgTServerHello = decodeApplicationLayerProtocolNegotiation
     extensionDecode MsgTEncryptedExtensions = decodeApplicationLayerProtocolNegotiation
-    extensionDecode _ = error "extensionDecode: ApplicationLayerProtocolNegotiation"
+    extensionDecode _ = const Nothing
 
 decodeApplicationLayerProtocolNegotiation
     :: ByteString -> Maybe ApplicationLayerProtocolNegotiation
@@ -674,7 +674,7 @@ instance Extension ExtendedMainSecret where
     extensionEncode ExtendedMainSecret = B.empty
     extensionDecode MsgTClientHello "" = Just ExtendedMainSecret
     extensionDecode MsgTServerHello "" = Just ExtendedMainSecret
-    extensionDecode _ _ = error "extensionDecode: ExtendedMainSecret"
+    extensionDecode _ _ = Nothing
 
 ------------------------------------------------------------
 
@@ -749,7 +749,7 @@ instance Extension SessionTicket where
     extensionEncode (SessionTicket ticket) = runPut $ putBytes ticket
     extensionDecode MsgTClientHello = decodeSessionTicket
     extensionDecode MsgTServerHello = decodeSessionTicket
-    extensionDecode _ = error "extensionDecode: SessionTicket"
+    extensionDecode _ = const Nothing
 
 decodeSessionTicket :: ByteString -> Maybe SessionTicket
 decodeSessionTicket = runGetMaybe $ SessionTicket <$> (remaining >>= getBytes)
@@ -792,7 +792,7 @@ instance Extension PreSharedKey where
                 fromIntegral w16
     extensionDecode MsgTClientHello = decodePreSharedKeyClientHello
     extensionDecode MsgTServerHello = decodePreSharedKeyServerHello
-    extensionDecode _ = error "extensionDecode: PreShareKey"
+    extensionDecode _ = const Nothing
 
 decodePreSharedKeyClientHello :: ByteString -> Maybe PreSharedKey
 decodePreSharedKeyClientHello = runGetMaybe $ do
@@ -837,7 +837,7 @@ instance Extension EarlyDataIndication where
     extensionDecode MsgTNewSessionTicket =
         runGetMaybe $
             EarlyDataIndication . Just <$> getWord32
-    extensionDecode _ = error "extensionDecode: EarlyDataIndication"
+    extensionDecode _ = const Nothing
 
 ------------------------------------------------------------
 
@@ -860,7 +860,7 @@ instance Extension SupportedVersions where
             putBinaryVersion ver
     extensionDecode MsgTClientHello = decodeSupportedVersionsClientHello
     extensionDecode MsgTServerHello = decodeSupportedVersionsServerHello
-    extensionDecode _ = error "extensionDecode: SupportedVersionsServerHello"
+    extensionDecode _ = const Nothing
 
 decodeSupportedVersionsClientHello :: ByteString -> Maybe SupportedVersions
 decodeSupportedVersionsClientHello = runGetMaybe $ do
@@ -888,7 +888,7 @@ instance Extension Cookie where
     extensionID _ = EID_Cookie
     extensionEncode (Cookie opaque) = runPut $ putOpaque16 opaque
     extensionDecode MsgTServerHello = runGetMaybe (Cookie <$> getOpaque16)
-    extensionDecode _ = error "extensionDecode: Cookie"
+    extensionDecode _ = const Nothing
 
 ------------------------------------------------------------
 
@@ -916,7 +916,7 @@ instance Extension PskKeyExchangeModes where
             putWords8 $
                 map fromPskKexMode pkms
     extensionDecode MsgTClientHello = decodePskKeyExchangeModes
-    extensionDecode _ = error "extensionDecode: PskKeyExchangeModes"
+    extensionDecode _ = const Nothing
 
 decodePskKeyExchangeModes :: ByteString -> Maybe PskKeyExchangeModes
 decodePskKeyExchangeModes =
@@ -935,7 +935,7 @@ instance Extension CertificateAuthorities where
             putDNames names
     extensionDecode MsgTClientHello = decodeCertificateAuthorities
     extensionDecode MsgTCertificateRequest = decodeCertificateAuthorities
-    extensionDecode _ = error "extensionDecode: CertificateAuthorities"
+    extensionDecode _ = const Nothing
 
 decodeCertificateAuthorities :: ByteString -> Maybe CertificateAuthorities
 decodeCertificateAuthorities =
@@ -949,7 +949,7 @@ instance Extension PostHandshakeAuth where
     extensionID _ = EID_PostHandshakeAuth
     extensionEncode _ = B.empty
     extensionDecode MsgTClientHello = runGetMaybe $ return PostHandshakeAuth
-    extensionDecode _ = error "extensionDecode: PostHandshakeAuth"
+    extensionDecode _ = const Nothing
 
 ------------------------------------------------------------
 
@@ -964,7 +964,7 @@ instance Extension SignatureAlgorithmsCert where
                 >> mapM_ putSignatureHashAlgorithm algs
     extensionDecode MsgTClientHello = decodeSignatureAlgorithmsCert
     extensionDecode MsgTCertificateRequest = decodeSignatureAlgorithmsCert
-    extensionDecode _ = error "extensionDecode: SignatureAlgorithmsCert"
+    extensionDecode _ = const Nothing
 
 decodeSignatureAlgorithmsCert :: ByteString -> Maybe SignatureAlgorithmsCert
 decodeSignatureAlgorithmsCert = runGetMaybe $ do
@@ -1021,7 +1021,7 @@ instance Extension KeyShare where
     extensionDecode MsgTClientHello = decodeKeyShareClientHello
     extensionDecode MsgTServerHello = decodeKeyShareServerHello
     extensionDecode MsgTHelloRetryRequest = decodeKeyShareHRR
-    extensionDecode _ = error "extensionDecode: KeyShare"
+    extensionDecode _ = const Nothing
 
 decodeKeyShareClientHello :: ByteString -> Maybe KeyShare
 decodeKeyShareClientHello = runGetMaybe $ do
@@ -1059,7 +1059,7 @@ instance Extension EchOuterExtensions where
         putWord8 $ fromIntegral (length ids * 2)
         mapM_ (putWord16 . fromExtensionID) ids
     extensionDecode MsgTClientHello = decodeEchOuterExtensions
-    extensionDecode _ = error "extensionDecode: EchOuterExtensions"
+    extensionDecode _ = const Nothing
 
 decodeEchOuterExtensions :: ByteString -> Maybe EchOuterExtensions
 decodeEchOuterExtensions = runGetMaybe $ do
@@ -1120,7 +1120,7 @@ instance Extension EncryptedClientHello where
     extensionDecode MsgTClientHello = decodeECHClientHello
     extensionDecode MsgTEncryptedExtensions = decodeECHEncryptedExtensions
     extensionDecode MsgTHelloRetryRequest = decodeECHHelloRetryRequest
-    extensionDecode _ = error "extensionDecode: EncryptedClientHello"
+    extensionDecode _ = const Nothing
 
 decodeECH :: ByteString -> Maybe EncryptedClientHello
 decodeECH bs =
@@ -1172,4 +1172,4 @@ instance Extension SecureRenegotiation where
         opaque <- getOpaque8
         let (cvd, svd) = B.splitAt (B.length opaque `div` 2) opaque
         return $ SecureRenegotiation cvd svd
-    extensionDecode _ = error "extensionDecode: SecureRenegotiation"
+    extensionDecode _ = const Nothing

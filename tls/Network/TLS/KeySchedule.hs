@@ -6,12 +6,12 @@ module Network.TLS.KeySchedule (
     deriveSecret,
 ) where
 
-import qualified Crypto.Hash as H
-import Crypto.KDF.HKDF
-import Data.ByteArray (convert)
+import qualified Control.Exception as E
+import qualified Crypto.BoringSSL.HKDF as BHKDF
 import qualified Data.ByteString as BS
 
 import Network.TLS.Crypto
+import Network.TLS.Error
 import Network.TLS.Imports
 import Network.TLS.Types
 import Network.TLS.Wire
@@ -21,11 +21,10 @@ import Network.TLS.Wire
 -- | @HKDF-Extract@ function.  Returns the pseudorandom key (PRK) from salt and
 -- input keying material (IKM).
 hkdfExtract :: Hash -> ByteString -> ByteString -> ByteString
-hkdfExtract SHA1 salt ikm = convert (extract salt ikm :: PRK H.SHA1)
-hkdfExtract SHA256 salt ikm = convert (extract salt ikm :: PRK H.SHA256)
-hkdfExtract SHA384 salt ikm = convert (extract salt ikm :: PRK H.SHA384)
-hkdfExtract SHA512 salt ikm = convert (extract salt ikm :: PRK H.SHA512)
-hkdfExtract _ _ _ = error "hkdfExtract: unsupported hash"
+hkdfExtract h salt ikm =
+    case BHKDF.hkdfExtract (hashAlgorithm h) ikm salt of
+        Right prk -> prk
+        Left err -> E.throw $ Uncontextualized $ Error_Protocol ("hkdfExtract: " ++ show err) InternalError
 
 ----------------------------------------------------------------
 
@@ -54,10 +53,9 @@ hkdfExpandLabel h secret label ctx outlen = expand' h secret hkdfLabel outlen
         putOpaque8 ctx
 
 expand' :: Hash -> ByteString -> ByteString -> Int -> ByteString
-expand' SHA1 secret label len = expand (extractSkip secret :: PRK H.SHA1) label len
-expand' SHA256 secret label len = expand (extractSkip secret :: PRK H.SHA256) label len
-expand' SHA384 secret label len = expand (extractSkip secret :: PRK H.SHA384) label len
-expand' SHA512 secret label len = expand (extractSkip secret :: PRK H.SHA512) label len
-expand' _ _ _ _ = error "expand'"
+expand' h secret label len =
+    case BHKDF.hkdfExpand (hashAlgorithm h) secret label len of
+        Right okm -> okm
+        Left err -> E.throw $ Uncontextualized $ Error_Protocol ("hkdfExpandLabel: " ++ show err) InternalError
 
 ----------------------------------------------------------------

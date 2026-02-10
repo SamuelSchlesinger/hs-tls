@@ -4,12 +4,10 @@
 
 import Control.Concurrent
 import qualified Control.Exception as E
-import Crypto.Random
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Default (def)
-import Data.X509.CertificateStore
 import Network.Socket (accept, bind, close, listen, socket)
 import qualified Network.Socket as S
 import Network.TLS.SessionTicket
@@ -19,7 +17,7 @@ import System.Exit
 import System.IO
 import System.Timeout
 
-import Network.TLS
+import Network.TLS hiding (Certificate, getCertificate)
 import Network.TLS.Extra.Cipher
 
 import Common
@@ -80,7 +78,6 @@ getDefaultParams flags store smgr cred rtt0accept = do
                 def
                     { sharedSessionManager = smgr
                     , sharedCAStore = store
-                    , sharedValidationCache = validateCache
                     , sharedCredentials = Credentials [cred]
                     }
             , serverSupported =
@@ -101,13 +98,6 @@ getDefaultParams flags store smgr cred rtt0accept = do
             , serverEarlyDataSize = if rtt0accept then 2048 else 0
             }
   where
-    validateCache
-        | validateCert = def
-        | otherwise =
-            ValidationCache
-                (\_ _ _ -> return ValidationCachePass)
-                (\_ _ _ -> return ())
-
     myCiphers = foldl accBogusCipher getSelectedCiphers flags
       where
         accBogusCipher acc (BogusCipher c) =
@@ -149,7 +139,6 @@ getDefaultParams flags store smgr cred rtt0accept = do
         | NoVersionDowngrade `elem` flags = [tlsConnectVer]
         | otherwise = filter (<= tlsConnectVer) allVers
     allVers = [TLS13, TLS12, TLS11, TLS10, SSL3]
-    validateCert = NoValidateCert `notElem` flags
     allowRenegotiation = AllowRenegotiation `elem` flags
 
 getGroups :: [Flag] -> [Group]

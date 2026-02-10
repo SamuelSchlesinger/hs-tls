@@ -29,6 +29,21 @@ module Network.TLS.Struct (
     TLSError (..),
     TLSException (..),
     DistinguishedName,
+    DHParams,
+    DHPublic,
+    DHPrivate,
+    DHKey,
+    dhParams,
+    dhPublic,
+    dhPrivate,
+    dhParamsGetP,
+    dhParamsGetG,
+    dhParamsGetBits,
+    dhUnwrapPublic,
+    dhValid,
+    dhGetShared,
+    dhGenerateKeyPair,
+    dhUnwrap,
     ServerDHParams (..),
     serverDHParamsToParams,
     serverDHParamsToPublic,
@@ -121,17 +136,18 @@ module Network.TLS.Struct (
     HandshakeR,
 ) where
 
-import Data.X509 (
+import Network.TLS.X509 (
     CertificateChain (..),
-    DistinguishedName,
-    certSubjectDN,
-    getCharacterStringRawData,
-    getDistinguishedElements,
-    getSigned,
-    signedObject,
+    DistinguishedName (..),
+    SignedCertificate,
+    signedCertSubjectName,
  )
 
+import qualified Crypto.BoringSSL.Random
+import qualified Data.ByteString as B
+
 import Network.TLS.Crypto
+import Network.TLS.Crypto.BoringCompat (i2ospOf_, os2ip)
 import Network.TLS.Error
 import {-# SOURCE #-} Network.TLS.Extension
 import Network.TLS.HashAndSignature
@@ -344,6 +360,75 @@ data ServerDHParams = ServerDHParams
     }
     deriving (Show, Eq)
 
+-- | Local DH types for wire protocol (TLS 1.2 compatibility).
+-- These are simple wrappers around Integer, not backed by any crypto library.
+type DHParams = (Integer, Integer, Int) -- (p, g, bits)
+type DHPublic = Integer
+type DHPrivate = Integer
+type DHKey = ByteString
+
+dhParams :: Integer -> Integer -> DHParams
+dhParams p g = (p, g, integerBits p)
+  where
+    integerBits 0 = 0
+    integerBits n = 1 + integerBits (n `div` 2)
+
+dhPublic :: Integer -> DHPublic
+dhPublic = id
+
+dhParamsGetP :: DHParams -> Integer
+dhParamsGetP (p, _, _) = p
+
+dhParamsGetG :: DHParams -> Integer
+dhParamsGetG (_, g, _) = g
+
+dhParamsGetBits :: DHParams -> Int
+dhParamsGetBits (_, _, b) = b
+
+dhUnwrapPublic :: DHPublic -> Integer
+dhUnwrapPublic = id
+
+dhPrivate :: Integer -> DHPrivate
+dhPrivate = id
+
+dhUnwrap :: DHParams -> DHPublic -> [Integer]
+dhUnwrap (p, g, _) y = [p, g, y]
+
+-- | Check that group element is not in the 2-element subgroup { 1, p - 1 }.
+dhValid :: DHParams -> Integer -> Bool
+dhValid (p, _, _) y = 1 < y && y < p - 1
+
+-- | Generate a DH key pair using IO-based randomness.
+dhGenerateKeyPair :: DHParams -> IO (DHPrivate, DHPublic)
+dhGenerateKeyPair (p, g, bits) = do
+    -- Generate a random private exponent
+    privBytes <- Crypto.BoringSSL.Random.randomBytes ((bits + 7) `div` 8)
+    let privInt = os2ip privBytes `mod` (p - 2) + 2 -- ensure 2 <= priv < p
+        pubInt = modExp g privInt p
+    return (privInt, pubInt)
+  where
+    modExp base expo modulus = go base expo 1
+      where
+        go _ 0 acc = acc
+        go b e acc
+            | even e = go (b * b `mod` modulus) (e `div` 2) acc
+            | otherwise = go (b * b `mod` modulus) (e `div` 2) (acc * b `mod` modulus)
+
+-- | Compute DH shared secret.
+dhGetShared :: DHParams -> DHPrivate -> DHPublic -> DHKey
+dhGetShared (p, _, bits) priv pub =
+    let sharedInt = modExp pub priv p
+        -- Strip leading zeros, as required for DH(E) pre-main secret
+        bs = i2ospOf_ ((bits + 7) `div` 8) sharedInt
+    in snd $ B.span (== 0) bs
+  where
+    modExp base expo modulus = go base expo 1
+      where
+        go _ 0 acc = acc
+        go b e acc
+            | even e = go (b * b `mod` modulus) (e `div` 2) acc
+            | otherwise = go (b * b `mod` modulus) (e `div` 2) (acc * b `mod` modulus)
+
 serverDHParamsFrom :: DHParams -> DHPublic -> ServerDHParams
 serverDHParamsFrom params dhPub =
     ServerDHParams
@@ -430,15 +515,7 @@ emptyCertificateChain_ :: CertificateChain_
 emptyCertificateChain_ = CertificateChain_ (CertificateChain [])
 
 showCertificateChain :: CertificateChain -> String
-showCertificateChain (CertificateChain xs) = show $ map getName xs
-  where
-    getName =
-        maybe "" getCharacterStringRawData
-            . lookup [2, 5, 4, 3]
-            . getDistinguishedElements
-            . certSubjectDN
-            . signedObject
-            . getSigned
+showCertificateChain (CertificateChain xs) = show $ map signedCertSubjectName xs
 
 data ClientHello = CH
     { chVersion :: Version

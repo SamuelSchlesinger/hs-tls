@@ -47,8 +47,8 @@ aead
     -> BulkAdditionalData
     -> Expectation
 aead e d iv t additional = do
-    let (encrypted, at) = e iv t additional
-        (decrypted, at2) = d iv encrypted additional
+    let (encrypted, at@(AuthTag atBytes)) = e iv t additional
+        (decrypted, at2) = d iv (encrypted `B.append` atBytes) additional
     decrypted `shouldBe` t
     at `shouldBe` at2
 

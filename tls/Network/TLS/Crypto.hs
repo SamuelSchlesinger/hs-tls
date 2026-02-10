@@ -1,4 +1,3 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
 {-# OPTIONS_HADDOCK hide #-}
 
@@ -10,7 +9,6 @@ module Network.TLS.Crypto (
     hashUpdates,
     hashUpdateSSL,
     hashFinal,
-    module Network.TLS.Crypto.DH,
     module Network.TLS.Crypto.IES,
     module Network.TLS.Crypto.Types,
 
@@ -18,6 +16,7 @@ module Network.TLS.Crypto (
     hash,
     hashChunks,
     Hash (..),
+    hashAlgorithm,
     hashName,
     hashDigestSize,
     hashBlockSize,
@@ -30,7 +29,6 @@ module Network.TLS.Crypto (
     SignatureParams (..),
     isKeyExchangeSignatureKey,
     findKeyExchangeSignatureAlg,
-    findFiniteFieldGroup,
     findEllipticCurveGroup,
     kxEncrypt,
     kxDecrypt,
@@ -41,39 +39,16 @@ module Network.TLS.Crypto (
     kxSupportedPrivKeyEC,
     KxError (..),
     RSAEncoding (..),
+    pubkeyType,
 ) where
 
-import qualified Crypto.ECC as ECDSA
-import Crypto.Error
-import qualified Crypto.Hash as H
-import Crypto.Number.Basic (numBits)
-import qualified Crypto.PubKey.DH as DH
-import qualified Crypto.PubKey.DSA as DSA
-import qualified Crypto.PubKey.ECC.ECDSA as ECDSA_ECC
-import qualified Crypto.PubKey.ECC.Types as ECC
-import qualified Crypto.PubKey.ECDSA as ECDSA
-import qualified Crypto.PubKey.Ed25519 as Ed25519
-import qualified Crypto.PubKey.Ed448 as Ed448
-import qualified Crypto.PubKey.RSA as RSA
-import qualified Crypto.PubKey.RSA.PKCS15 as RSA
-import qualified Crypto.PubKey.RSA.PSS as PSS
-import Crypto.Random
-import Data.ASN1.BinaryEncoding (BER (..), DER (..))
-import Data.ASN1.Encoding
-import Data.ASN1.Types
-import qualified Data.ByteArray as B (convert)
+import qualified Crypto.BoringSSL.Digest as Digest
+import qualified Crypto.BoringSSL.ECDSA as BECDSA
+import qualified Crypto.BoringSSL.Ed25519 as BEd25519
+import qualified Crypto.BoringSSL.RSA as BRSA
 import qualified Data.ByteString as B
-import Data.Proxy
-import Data.X509 (
-    PrivKey (..),
-    PrivKeyEC (..),
-    PubKey (..),
-    PubKeyEC (..),
-    SerializedPoint (..),
- )
-import Data.X509.EC (ecPrivKeyCurveName, ecPubKeyCurveName, unserializePoint)
+import System.IO.Unsafe (unsafePerformIO)
 
-import Network.TLS.Crypto.DH
 import Network.TLS.Crypto.IES
 import Network.TLS.Crypto.Types
 import Network.TLS.Imports
@@ -83,70 +58,92 @@ type PublicKey = PubKey
 {-# DEPRECATED PrivateKey "use PrivKey" #-}
 type PrivateKey = PrivKey
 
+-- | Public key types backed by boringssl.
+data PubKey
+    = PubKeyRSA BRSA.RSAPublicKey
+    | PubKeyEC BECDSA.ECCurve BECDSA.ECPublicKey
+    | PubKeyEd25519 BEd25519.PublicKey
+
+instance Show PubKey where
+    show (PubKeyRSA _) = "PubKeyRSA"
+    show (PubKeyEC c _) = "PubKeyEC " ++ show c
+    show (PubKeyEd25519 _) = "PubKeyEd25519"
+
+-- | Private key types backed by boringssl.
+data PrivKey
+    = PrivKeyRSA BRSA.RSAKeyPair
+    | PrivKeyEC BECDSA.ECCurve BECDSA.ECKeyPair
+    | PrivKeyEd25519 BEd25519.PrivateKey
+
+instance Show PrivKey where
+    show (PrivKeyRSA _) = "PrivKeyRSA"
+    show (PrivKeyEC c _) = "PrivKeyEC " ++ show c
+    show (PrivKeyEd25519 _) = "PrivKeyEd25519"
+
 data KxError
-    = RSAError RSA.Error
+    = RSAError String
     | KxUnsupported
     deriving (Show)
 
+-- | Return a human-readable name for a public key type.
+pubkeyType :: PubKey -> String
+pubkeyType (PubKeyRSA _) = "RSA"
+pubkeyType (PubKeyEC _ _) = "ECDSA"
+pubkeyType (PubKeyEd25519 _) = "Ed25519"
+
 isKeyExchangeSignatureKey :: KeyExchangeSignatureAlg -> PubKey -> Bool
-isKeyExchangeSignatureKey = f
-  where
-    f KX_RSA (PubKeyRSA _) = True
-    f KX_DSA (PubKeyDSA _) = True
-    f KX_ECDSA (PubKeyEC _) = True
-    f KX_ECDSA (PubKeyEd25519 _) = True
-    f KX_ECDSA (PubKeyEd448 _) = True
-    f _ _ = False
+isKeyExchangeSignatureKey KX_RSA (PubKeyRSA _) = True
+isKeyExchangeSignatureKey KX_ECDSA (PubKeyEC _ _) = True
+isKeyExchangeSignatureKey KX_ECDSA (PubKeyEd25519 _) = True
+isKeyExchangeSignatureKey _ _ = False
 
 findKeyExchangeSignatureAlg
     :: (PubKey, PrivKey) -> Maybe KeyExchangeSignatureAlg
 findKeyExchangeSignatureAlg keyPair =
     case keyPair of
         (PubKeyRSA _, PrivKeyRSA _) -> Just KX_RSA
-        (PubKeyDSA _, PrivKeyDSA _) -> Just KX_DSA
-        (PubKeyEC _, PrivKeyEC _) -> Just KX_ECDSA
+        (PubKeyEC _ _, PrivKeyEC _ _) -> Just KX_ECDSA
         (PubKeyEd25519 _, PrivKeyEd25519 _) -> Just KX_ECDSA
-        (PubKeyEd448 _, PrivKeyEd448 _) -> Just KX_ECDSA
         _ -> Nothing
 
-findFiniteFieldGroup :: DH.Params -> Maybe Group
-findFiniteFieldGroup params = lookup (pg params) table
-  where
-    pg (DH.Params p g _) = (p, g)
+findEllipticCurveGroup :: BECDSA.ECCurve -> Maybe Group
+findEllipticCurveGroup BECDSA.P256 = Just P256
+findEllipticCurveGroup BECDSA.P384 = Just P384
+findEllipticCurveGroup BECDSA.P521 = Just P521
 
-    table =
-        [ (pg prms, grp)
-        | grp <- availableFFGroups
-        , let prms = fromJust $ dhParamsForGroup grp
-        ]
+-- Map our Hash type to boringssl's Algorithm type.
+hashAlgorithm :: Hash -> Digest.Algorithm
+hashAlgorithm MD5 = Digest.MD5
+hashAlgorithm SHA1 = Digest.SHA1
+hashAlgorithm SHA224 = Digest.SHA224
+hashAlgorithm SHA256 = Digest.SHA256
+hashAlgorithm SHA384 = Digest.SHA384
+hashAlgorithm SHA512 = Digest.SHA512
+hashAlgorithm SHA1_MD5 = error "hashAlgorithm: SHA1_MD5 has no single algorithm"
 
-findEllipticCurveGroup :: PubKeyEC -> Maybe Group
-findEllipticCurveGroup ecPub =
-    case ecPubKeyCurveName ecPub of
-        Just ECC.SEC_p256r1 -> Just P256
-        Just ECC.SEC_p384r1 -> Just P384
-        Just ECC.SEC_p521r1 -> Just P521
-        _ -> Nothing
-
--- functions to use the hidden class.
 hashInit :: Hash -> HashContext
-hashInit MD5 = HashContext $ ContextSimple (H.hashInit :: H.Context H.MD5)
-hashInit SHA1 = HashContext $ ContextSimple (H.hashInit :: H.Context H.SHA1)
-hashInit SHA224 = HashContext $ ContextSimple (H.hashInit :: H.Context H.SHA224)
-hashInit SHA256 = HashContext $ ContextSimple (H.hashInit :: H.Context H.SHA256)
-hashInit SHA384 = HashContext $ ContextSimple (H.hashInit :: H.Context H.SHA384)
-hashInit SHA512 = HashContext $ ContextSimple (H.hashInit :: H.Context H.SHA512)
-hashInit SHA1_MD5 = HashContextSSL H.hashInit H.hashInit
+hashInit SHA1_MD5 = unsafePerformIO $ do
+    sha1Ctx <- Digest.digestInit Digest.SHA1
+    md5Ctx <- Digest.digestInit Digest.MD5
+    return (HashContextSSL sha1Ctx md5Ctx)
+hashInit h = unsafePerformIO $ do
+    ctx <- Digest.digestInit (hashAlgorithm h)
+    return (HashContext ctx)
 
 hashUpdate :: HashContext -> ByteString -> HashCtx
-hashUpdate (HashContext (ContextSimple h)) b = HashContext $ ContextSimple (H.hashUpdate h b)
-hashUpdate (HashContextSSL sha1Ctx md5Ctx) b =
-    HashContextSSL (H.hashUpdate sha1Ctx b) (H.hashUpdate md5Ctx b)
+hashUpdate (HashContext ctx) b = unsafePerformIO $ do
+    ctx' <- Digest.digestCopy ctx
+    Digest.digestUpdate ctx' b
+    return (HashContext ctx')
+hashUpdate (HashContextSSL sha1Ctx md5Ctx) b = unsafePerformIO $ do
+    sha1Ctx' <- Digest.digestCopy sha1Ctx
+    md5Ctx' <- Digest.digestCopy md5Ctx
+    Digest.digestUpdate sha1Ctx' b
+    Digest.digestUpdate md5Ctx' b
+    return (HashContextSSL sha1Ctx' md5Ctx')
 
 hashUpdates :: HashContext -> [ByteString] -> HashCtx
-hashUpdates (HashContext (ContextSimple h)) xs = HashContext $ ContextSimple (H.hashUpdates h xs)
-hashUpdates (HashContextSSL sha1Ctx md5Ctx) xs =
-    HashContextSSL (H.hashUpdates sha1Ctx xs) (H.hashUpdates md5Ctx xs)
+hashUpdates ctx xs = foldl' hashUpdate ctx xs
 
 hashChunks :: Hash -> [ByteString] -> ByteString
 hashChunks h xs = hashFinal $ hashUpdates (hashInit h) xs
@@ -157,43 +154,40 @@ hashUpdateSSL
     -- ^ (for the md5 context, for the sha1 context)
     -> HashCtx
 hashUpdateSSL (HashContext _) _ = error "internal error: update SSL without a SSL Context"
-hashUpdateSSL (HashContextSSL sha1Ctx md5Ctx) (b1, b2) =
-    HashContextSSL (H.hashUpdate sha1Ctx b2) (H.hashUpdate md5Ctx b1)
+hashUpdateSSL (HashContextSSL sha1Ctx md5Ctx) (b1, b2) = unsafePerformIO $ do
+    sha1Ctx' <- Digest.digestCopy sha1Ctx
+    md5Ctx' <- Digest.digestCopy md5Ctx
+    Digest.digestUpdate sha1Ctx' b2
+    Digest.digestUpdate md5Ctx' b1
+    return (HashContextSSL sha1Ctx' md5Ctx')
 
 hashFinal :: HashCtx -> ByteString
-hashFinal (HashContext (ContextSimple h)) = B.convert $ H.hashFinalize h
-hashFinal (HashContextSSL sha1Ctx md5Ctx) =
-    B.concat [B.convert (H.hashFinalize md5Ctx), B.convert (H.hashFinalize sha1Ctx)]
+hashFinal (HashContext ctx) = unsafePerformIO $ do
+    ctx' <- Digest.digestCopy ctx
+    Digest.digestFinalize ctx'
+hashFinal (HashContextSSL sha1Ctx md5Ctx) = unsafePerformIO $ do
+    sha1Ctx' <- Digest.digestCopy sha1Ctx
+    md5Ctx' <- Digest.digestCopy md5Ctx
+    md5Digest <- Digest.digestFinalize md5Ctx'
+    sha1Digest <- Digest.digestFinalize sha1Ctx'
+    return $ B.concat [md5Digest, sha1Digest]
 
 data Hash = MD5 | SHA1 | SHA224 | SHA256 | SHA384 | SHA512 | SHA1_MD5
     deriving (Show, Eq)
 
 data HashContext
-    = HashContext ContextSimple
-    | HashContextSSL (H.Context H.SHA1) (H.Context H.MD5)
+    = HashContext Digest.DigestCtx
+    | HashContextSSL Digest.DigestCtx Digest.DigestCtx -- SHA1, MD5
 
 instance Show HashContext where
     show _ = "hash-context"
 
-data ContextSimple
-    = forall alg. H.HashAlgorithm alg => ContextSimple (H.Context alg)
-
 type HashCtx = HashContext
 
 hash :: Hash -> ByteString -> ByteString
-hash MD5 b = B.convert . (H.hash :: ByteString -> H.Digest H.MD5) $ b
-hash SHA1 b = B.convert . (H.hash :: ByteString -> H.Digest H.SHA1) $ b
-hash SHA224 b = B.convert . (H.hash :: ByteString -> H.Digest H.SHA224) $ b
-hash SHA256 b = B.convert . (H.hash :: ByteString -> H.Digest H.SHA256) $ b
-hash SHA384 b = B.convert . (H.hash :: ByteString -> H.Digest H.SHA384) $ b
-hash SHA512 b = B.convert . (H.hash :: ByteString -> H.Digest H.SHA512) $ b
 hash SHA1_MD5 b =
-    B.concat [B.convert (md5Hash b), B.convert (sha1Hash b)]
-  where
-    sha1Hash :: ByteString -> H.Digest H.SHA1
-    sha1Hash = H.hash
-    md5Hash :: ByteString -> H.Digest H.MD5
-    md5Hash = H.hash
+    B.concat [Digest.hash Digest.MD5 b, Digest.hash Digest.SHA1 b]
+hash h b = Digest.hash (hashAlgorithm h) b
 
 hashName :: Hash -> String
 hashName = show
@@ -219,26 +213,21 @@ hashBlockSize SHA1_MD5 = 64
 
 {- key exchange methods encrypt and decrypt for each supported algorithm -}
 
-generalizeRSAError :: Either RSA.Error a -> Either KxError a
-generalizeRSAError (Left e) = Left (RSAError e)
-generalizeRSAError (Right x) = Right x
-
-kxEncrypt
-    :: MonadRandom r => PublicKey -> ByteString -> r (Either KxError ByteString)
-kxEncrypt (PubKeyRSA pk) b = generalizeRSAError <$> RSA.encrypt pk b
-kxEncrypt _ _ = return (Left KxUnsupported)
-
-kxDecrypt
-    :: MonadRandom r => PrivateKey -> ByteString -> r (Either KxError ByteString)
-kxDecrypt (PrivKeyRSA pk) b = generalizeRSAError <$> RSA.decryptSafer pk b
-kxDecrypt _ _ = return (Left KxUnsupported)
-
 data RSAEncoding = RSApkcs1 | RSApss deriving (Show, Eq)
+
+-- Signature algorithm and associated parameters.
+data SignatureParams
+    = RSAParams Hash RSAEncoding
+    | ECDSAParams Hash
+    | Ed25519Params
+    deriving (Show, Eq)
 
 -- | Test the RSASSA-PKCS1 length condition described in RFC 8017 section 9.2,
 -- i.e. @emLen >= tLen + 11@.  Lengths are in bytes.
-kxCanUseRSApkcs1 :: RSA.PublicKey -> Hash -> Bool
-kxCanUseRSApkcs1 pk h = RSA.public_size pk >= tLen + 11
+kxCanUseRSApkcs1 :: BRSA.RSAPublicKey -> Hash -> Bool
+kxCanUseRSApkcs1 pk h = unsafePerformIO $ do
+    size <- BRSA.rsaPublicSize pk
+    return $ size >= tLen + 11
   where
     tLen = prefixSize h + hashDigestSize h
 
@@ -252,254 +241,81 @@ kxCanUseRSApkcs1 pk h = RSA.public_size pk >= tLen + 11
 
 -- | Test the RSASSA-PSS length condition described in RFC 8017 section 9.1.1,
 -- i.e. @emBits >= 8hLen + 8sLen + 9@.  Lengths are in bits.
-kxCanUseRSApss :: RSA.PublicKey -> Hash -> Bool
-kxCanUseRSApss pk h = numBits (RSA.public_n pk) >= 16 * hashDigestSize h + 10
+kxCanUseRSApss :: BRSA.RSAPublicKey -> Hash -> Bool
+kxCanUseRSApss pk h = unsafePerformIO $ do
+    bits <- BRSA.rsaPublicBits pk
+    return $ bits >= 16 * hashDigestSize h + 10
 
--- Signature algorithm and associated parameters.
---
--- FIXME add RSAPSSParams
-data SignatureParams
-    = RSAParams Hash RSAEncoding
-    | DSAParams
-    | ECDSAParams Hash
-    | Ed25519Params
-    | Ed448Params
-    deriving (Show, Eq)
+-- | All EC curves supported by boringssl are supported.
+kxSupportedPrivKeyEC :: BECDSA.ECCurve -> Bool
+kxSupportedPrivKeyEC _ = True
 
--- Verify that the signature matches the given message, using the
--- public key.
---
+-- | Encrypt using RSA PKCS#1 v1.5 (for TLS 1.2 RSA key exchange).
+kxEncrypt :: PubKey -> ByteString -> IO (Either KxError ByteString)
+kxEncrypt (PubKeyRSA pk) b = mapErr <$> BRSA.rsaEncryptPKCS1 pk b
+kxEncrypt _ _ = return (Left KxUnsupported)
 
-kxVerify :: PublicKey -> SignatureParams -> ByteString -> ByteString -> Bool
-kxVerify (PubKeyRSA pk) (RSAParams alg RSApkcs1) msg sign = rsaVerifyHash alg pk msg sign
-kxVerify (PubKeyRSA pk) (RSAParams alg RSApss) msg sign = rsapssVerifyHash alg pk msg sign
-kxVerify (PubKeyDSA pk) DSAParams msg signBS =
-    case dsaToSignature signBS of
-        Just sig -> DSA.verify H.SHA1 pk sig msg
-        _ -> False
-  where
-    dsaToSignature :: ByteString -> Maybe DSA.Signature
-    dsaToSignature b =
-        case decodeASN1' BER b of
-            Left _ -> Nothing
-            Right asn1 ->
-                case asn1 of
-                    Start Sequence : IntVal r : IntVal s : End Sequence : _ ->
-                        Just DSA.Signature{DSA.sign_r = r, DSA.sign_s = s}
-                    _ ->
-                        Nothing
-kxVerify (PubKeyEC key) (ECDSAParams alg) msg sigBS =
-    fromMaybe False $
-        join $
-            withPubKeyEC key verifyProxy verifyClassic Nothing
-  where
-    decodeSignatureASN1 buildRS =
-        case decodeASN1' BER sigBS of
-            Left _ -> Nothing
-            Right [Start Sequence, IntVal r, IntVal s, End Sequence] ->
-                Just (buildRS r s)
-            Right _ -> Nothing
-    verifyProxy prx pubkey = do
-        rs <- decodeSignatureASN1 (,)
-        signature <- maybeCryptoError $ ECDSA.signatureFromIntegers prx rs
-        verifyF <- withAlg (ECDSA.verify prx)
-        return $ verifyF pubkey signature msg
-    verifyClassic pubkey = do
-        signature <- decodeSignatureASN1 ECDSA_ECC.Signature
-        verifyF <- withAlg ECDSA_ECC.verify
-        return $ verifyF pubkey signature msg
-    withAlg :: (forall hash. H.HashAlgorithm hash => hash -> a) -> Maybe a
-    withAlg f = case alg of
-        MD5 -> Just (f H.MD5)
-        SHA1 -> Just (f H.SHA1)
-        SHA224 -> Just (f H.SHA224)
-        SHA256 -> Just (f H.SHA256)
-        SHA384 -> Just (f H.SHA384)
-        SHA512 -> Just (f H.SHA512)
-        _ -> Nothing
-kxVerify (PubKeyEd25519 key) Ed25519Params msg sigBS =
-    case Ed25519.signature sigBS of
-        CryptoPassed sig -> Ed25519.verify key msg sig
-        _ -> False
-kxVerify (PubKeyEd448 key) Ed448Params msg sigBS =
-    case Ed448.signature sigBS of
-        CryptoPassed sig -> Ed448.verify key msg sig
-        _ -> False
-kxVerify _ _ _ _ = False
+-- | Decrypt using RSA PKCS#1 v1.5 (for TLS 1.2 RSA key exchange).
+kxDecrypt :: PrivKey -> ByteString -> IO (Either KxError ByteString)
+kxDecrypt (PrivKeyRSA pk) b = mapErr <$> BRSA.rsaDecryptPKCS1 pk b
+kxDecrypt _ _ = return (Left KxUnsupported)
 
--- Sign the given message using the private key.
---
+-- | Sign the given message using the private key.
+-- The message is hashed internally using the appropriate hash algorithm.
 kxSign
-    :: MonadRandom r
-    => PrivateKey
-    -> PublicKey
+    :: PrivKey
+    -> PubKey
     -> SignatureParams
     -> ByteString
-    -> r (Either KxError ByteString)
-kxSign (PrivKeyRSA pk) (PubKeyRSA _) (RSAParams hashAlg RSApkcs1) msg =
-    generalizeRSAError <$> rsaSignHash hashAlg pk msg
-kxSign (PrivKeyRSA pk) (PubKeyRSA _) (RSAParams hashAlg RSApss) msg =
-    generalizeRSAError <$> rsapssSignHash hashAlg pk msg
-kxSign (PrivKeyDSA pk) (PubKeyDSA _) DSAParams msg = do
-    sign <- DSA.sign pk H.SHA1 msg
-    return (Right $ encodeASN1' DER $ dsaSequence sign)
-  where
-    dsaSequence sign =
-        [ Start Sequence
-        , IntVal (DSA.sign_r sign)
-        , IntVal (DSA.sign_s sign)
-        , End Sequence
-        ]
-kxSign (PrivKeyEC pk) (PubKeyEC _) (ECDSAParams hashAlg) msg =
-    case withPrivKeyEC pk doSign (const unsupported) unsupported of
-        Nothing -> unsupported
-        Just run -> fmap encode <$> run
-  where
-    encode (r, s) =
-        encodeASN1'
-            DER
-            [Start Sequence, IntVal r, IntVal s, End Sequence]
-    doSign prx privkey = do
-        msig <- ecdsaSignHash prx hashAlg privkey msg
-        return $ case msig of
-            Nothing -> Left KxUnsupported
-            Just sign -> Right (ECDSA.signatureToIntegers prx sign)
-    unsupported = return $ Left KxUnsupported
-kxSign (PrivKeyEd25519 pk) (PubKeyEd25519 pub) Ed25519Params msg =
-    return $ Right $ B.convert $ Ed25519.sign pk pub msg
-kxSign (PrivKeyEd448 pk) (PubKeyEd448 pub) Ed448Params msg =
-    return $ Right $ B.convert $ Ed448.sign pk pub msg
+    -> IO (Either KxError ByteString)
+kxSign (PrivKeyRSA pk) (PubKeyRSA _) (RSAParams SHA1_MD5 RSApkcs1) _msg =
+    -- SHA1_MD5 is used for TLS < 1.2 raw RSA signing. Not supported with boringssl.
+    return (Left (RSAError "SHA1_MD5 RSA signing not supported"))
+kxSign (PrivKeyRSA pk) (PubKeyRSA _) (RSAParams hashAlg RSApkcs1) msg = do
+    let alg = hashAlgorithm hashAlg
+        digest = Digest.hash alg msg
+    mapErr <$> BRSA.rsaSign pk alg digest
+kxSign (PrivKeyRSA pk) (PubKeyRSA _) (RSAParams hashAlg RSApss) msg = do
+    let alg = hashAlgorithm hashAlg
+        digest = Digest.hash alg msg
+    mapErr <$> BRSA.rsaSignPSS pk alg digest
+kxSign (PrivKeyEC _ kp) (PubKeyEC _ _) (ECDSAParams hashAlg) msg = do
+    let digest = Digest.hash (hashAlgorithm hashAlg) msg
+    mapErr <$> BECDSA.ecdsaSign kp digest
+kxSign (PrivKeyEd25519 pk) (PubKeyEd25519 _) Ed25519Params msg =
+    case BEd25519.sign pk msg of
+        Right sig -> return $ Right $ BEd25519.signatureToBytes sig
+        Left err -> return $ Left $ RSAError (show err)
 kxSign _ _ _ _ =
     return (Left KxUnsupported)
 
-rsaSignHash
-    :: MonadRandom m
-    => Hash
-    -> RSA.PrivateKey
-    -> ByteString
-    -> m (Either RSA.Error ByteString)
-rsaSignHash SHA1_MD5 pk msg = RSA.signSafer noHash pk msg
-rsaSignHash MD5 pk msg = RSA.signSafer (Just H.MD5) pk msg
-rsaSignHash SHA1 pk msg = RSA.signSafer (Just H.SHA1) pk msg
-rsaSignHash SHA224 pk msg = RSA.signSafer (Just H.SHA224) pk msg
-rsaSignHash SHA256 pk msg = RSA.signSafer (Just H.SHA256) pk msg
-rsaSignHash SHA384 pk msg = RSA.signSafer (Just H.SHA384) pk msg
-rsaSignHash SHA512 pk msg = RSA.signSafer (Just H.SHA512) pk msg
+-- | Verify that the signature matches the given message, using the public key.
+-- The message is hashed internally using the appropriate hash algorithm.
+kxVerify :: PubKey -> SignatureParams -> ByteString -> ByteString -> IO Bool
+kxVerify (PubKeyRSA pk) (RSAParams SHA1_MD5 RSApkcs1) _msg _sig =
+    -- SHA1_MD5 is used for TLS < 1.2. Not supported with boringssl.
+    return False
+kxVerify (PubKeyRSA pk) (RSAParams hashAlg RSApkcs1) msg sig = do
+    let alg = hashAlgorithm hashAlg
+        digest = Digest.hash alg msg
+    result <- BRSA.rsaVerify pk alg digest sig
+    return $ either (const False) id result
+kxVerify (PubKeyRSA pk) (RSAParams hashAlg RSApss) msg sig = do
+    let alg = hashAlgorithm hashAlg
+        digest = Digest.hash alg msg
+    result <- BRSA.rsaVerifyPSS pk alg digest sig
+    return $ either (const False) id result
+kxVerify (PubKeyEC _ pubKey) (ECDSAParams hashAlg) msg sig = do
+    let digest = Digest.hash (hashAlgorithm hashAlg) msg
+    result <- BECDSA.ecdsaVerify pubKey digest sig
+    return $ either (const False) id result
+kxVerify (PubKeyEd25519 pk) Ed25519Params msg sigBS =
+    case BEd25519.signatureFromBytes sigBS of
+        Just sig -> return $ BEd25519.verify pk msg sig
+        Nothing -> return False
+kxVerify _ _ _ _ = return False
 
-rsapssSignHash
-    :: MonadRandom m
-    => Hash
-    -> RSA.PrivateKey
-    -> ByteString
-    -> m (Either RSA.Error ByteString)
-rsapssSignHash SHA256 pk msg = PSS.signSafer (PSS.defaultPSSParams H.SHA256) pk msg
-rsapssSignHash SHA384 pk msg = PSS.signSafer (PSS.defaultPSSParams H.SHA384) pk msg
-rsapssSignHash SHA512 pk msg = PSS.signSafer (PSS.defaultPSSParams H.SHA512) pk msg
-rsapssSignHash _ _ _ = error "rsapssSignHash: unsupported hash"
-
-rsaVerifyHash :: Hash -> RSA.PublicKey -> ByteString -> ByteString -> Bool
-rsaVerifyHash SHA1_MD5 = RSA.verify noHash
-rsaVerifyHash MD5 = RSA.verify (Just H.MD5)
-rsaVerifyHash SHA1 = RSA.verify (Just H.SHA1)
-rsaVerifyHash SHA224 = RSA.verify (Just H.SHA224)
-rsaVerifyHash SHA256 = RSA.verify (Just H.SHA256)
-rsaVerifyHash SHA384 = RSA.verify (Just H.SHA384)
-rsaVerifyHash SHA512 = RSA.verify (Just H.SHA512)
-
-rsapssVerifyHash :: Hash -> RSA.PublicKey -> ByteString -> ByteString -> Bool
-rsapssVerifyHash SHA256 = PSS.verify (PSS.defaultPSSParams H.SHA256)
-rsapssVerifyHash SHA384 = PSS.verify (PSS.defaultPSSParams H.SHA384)
-rsapssVerifyHash SHA512 = PSS.verify (PSS.defaultPSSParams H.SHA512)
-rsapssVerifyHash _ = error "rsapssVerifyHash: unsupported hash"
-
-noHash :: Maybe H.MD5
-noHash = Nothing
-
-ecdsaSignHash
-    :: (MonadRandom m, ECDSA.EllipticCurveECDSA curve)
-    => proxy curve
-    -> Hash
-    -> ECDSA.Scalar curve
-    -> ByteString
-    -> m (Maybe (ECDSA.Signature curve))
-ecdsaSignHash prx SHA1 pk msg = Just <$> ECDSA.sign prx pk H.SHA1 msg
-ecdsaSignHash prx SHA224 pk msg = Just <$> ECDSA.sign prx pk H.SHA224 msg
-ecdsaSignHash prx SHA256 pk msg = Just <$> ECDSA.sign prx pk H.SHA256 msg
-ecdsaSignHash prx SHA384 pk msg = Just <$> ECDSA.sign prx pk H.SHA384 msg
-ecdsaSignHash prx SHA512 pk msg = Just <$> ECDSA.sign prx pk H.SHA512 msg
-ecdsaSignHash _ _ _ _ = return Nothing
-
--- Currently we generate ECDSA signatures in constant time for P256 only.
-kxSupportedPrivKeyEC :: PrivKeyEC -> Bool
-kxSupportedPrivKeyEC privkey =
-    case ecPrivKeyCurveName privkey of
-        Just ECC.SEC_p256r1 -> True
-        Just ECC.SEC_p384r1 -> True
-        Just ECC.SEC_p521r1 -> True
-        _ -> False
-
--- Perform a public-key operation with a parameterized ECC implementation when
--- available, otherwise fallback to the classic ECC implementation.
-withPubKeyEC
-    :: PubKeyEC
-    -> ( forall curve
-          . ECDSA.EllipticCurveECDSA curve
-         => Proxy curve
-         -> ECDSA.PublicKey curve
-         -> a
-       )
-    -> (ECDSA_ECC.PublicKey -> a)
-    -> a
-    -> Maybe a
-withPubKeyEC pubkey withProxy withClassic whenUnknown =
-    case ecPubKeyCurveName pubkey of
-        Nothing -> Just whenUnknown
-        Just ECC.SEC_p256r1 ->
-            maybeCryptoError $ withProxy p256 <$> ECDSA.decodePublic p256 bs
-        Just ECC.SEC_p384r1 ->
-            maybeCryptoError $ withProxy p384 <$> ECDSA.decodePublic p384 bs
-        Just ECC.SEC_p521r1 ->
-            maybeCryptoError $ withProxy p521 <$> ECDSA.decodePublic p521 bs
-        Just curveName ->
-            let curve = ECC.getCurveByName curveName
-                pub = unserializePoint curve pt
-             in withClassic . ECDSA_ECC.PublicKey curve <$> pub
-  where
-    pt@(SerializedPoint bs) = pubkeyEC_pub pubkey
-
--- Perform a private-key operation with a parameterized ECC implementation when
--- available.  Calls for an unsupported curve can be prevented with
--- kxSupportedEcPrivKey.
-withPrivKeyEC
-    :: PrivKeyEC
-    -> ( forall curve
-          . ECDSA.EllipticCurveECDSA curve
-         => Proxy curve
-         -> ECDSA.PrivateKey curve
-         -> a
-       )
-    -> (ECC.CurveName -> a)
-    -> a
-    -> Maybe a
-withPrivKeyEC privkey withProxy withUnsupported whenUnknown =
-    case ecPrivKeyCurveName privkey of
-        Nothing -> Just whenUnknown
-        Just ECC.SEC_p256r1 ->
-            -- Private key should rather be stored as bytearray and converted
-            -- using ECDSA.decodePrivate, unfortunately the data type chosen in
-            -- x509 was Integer.
-            maybeCryptoError $ withProxy p256 <$> ECDSA.scalarFromInteger p256 d
-        Just ECC.SEC_p384r1 ->
-            maybeCryptoError $ withProxy p384 <$> ECDSA.scalarFromInteger p384 d
-        Just ECC.SEC_p521r1 ->
-            maybeCryptoError $ withProxy p521 <$> ECDSA.scalarFromInteger p521 d
-        Just curveName -> Just $ withUnsupported curveName
-  where
-    d = privkeyEC_priv privkey
-
-p256 :: Proxy ECDSA.Curve_P256R1
-p256 = Proxy
-p384 :: Proxy ECDSA.Curve_P384R1
-p384 = Proxy
-p521 :: Proxy ECDSA.Curve_P521R1
-p521 = Proxy
+-- | Map CryptoError to KxError
+mapErr :: Either BRSA.CryptoError a -> Either KxError a
+mapErr (Left e) = Left (RSAError (show e))
+mapErr (Right x) = Right x

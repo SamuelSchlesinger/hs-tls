@@ -325,8 +325,6 @@ data Supported = Supported
     --   , (Struct.HashSHA512, SignatureRSA)
     --   , (Struct.HashSHA384, SignatureRSA)
     --   , (Struct.HashSHA256, SignatureRSA)
-    --   , (Struct.HashSHA1,   SignatureRSA)
-    --   , (Struct.HashSHA1,   SignatureDSA)
     --   ]
     -- @
     , supportedSecureRenegotiation :: Bool
@@ -458,12 +456,11 @@ data Shared = Shared
     , sharedCAStore :: CertificateStore
     -- ^ A collection of trust anchors to be used by a client as part
     -- of validation of server certificates.  This is set as first
-    -- argument to function 'onServerCertificate'.  Package
-    -- <https://hackage.haskell.org/package/crypton-x509-system
-    -- crypton-x509-system> gives access to a default certificate
-    -- store configured in the system.
+    -- argument to function 'onServerCertificate'.  Use
+    -- 'getSystemCertificateStore' to load the system's default
+    -- certificate store.
     --
-    -- Default: 'mempty'
+    -- Default: 'emptyCertificateStore'
     , sharedValidationCache :: ValidationCache
     -- ^ Callbacks that may be used by a client to cache certificate
     -- validation results (positive or negative) and avoid expensive
@@ -499,7 +496,7 @@ defaultShared =
     Shared
         { sharedCredentials = mempty
         , sharedSessionManager = noSessionManager
-        , sharedCAStore = mempty
+        , sharedCAStore = emptyCertificateStore
         , sharedValidationCache = def
         , sharedHelloExtensions = []
         , sharedECHConfigList = []
@@ -759,7 +756,14 @@ data Information = Information
     , infoIsEarlyDataAccepted :: Bool
     , infoIsECHAccepted :: Bool
     }
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Information where
+    show info = "Information {infoVersion = " ++ show (infoVersion info)
+        ++ ", infoCipher = " ++ show (infoCipher info)
+        ++ ", infoMainSecret = " ++ maybe "Nothing" (\_ -> "<redacted>") (infoMainSecret info)
+        ++ ", infoSupportedGroup = " ++ show (infoSupportedGroup info)
+        ++ "}"
 
 -- | Limitations for security.
 --

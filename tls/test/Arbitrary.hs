@@ -7,8 +7,7 @@ import Control.Monad
 import qualified Data.ByteString as B
 import Data.List
 import Data.Word
-import Data.X509 (ExtKeyUsageFlag)
-import Network.TLS
+import Network.TLS hiding (Certificate, getCertificate, DistinguishedName(..))
 import Network.TLS.Extra.Cipher
 import Network.TLS.Internal
 import Test.QuickCheck
@@ -94,7 +93,7 @@ instance Arbitrary Handshake where
             , pure HelloRequest
             , pure ServerHelloDone
             , ClientKeyXchg . CKX_RSA <$> genByteString 48
-            , CertRequest <$> arbitrary <*> arbitrary <*> listOf arbitraryDN
+            , CertRequest <$> arbitrary <*> arbitrary <*> listOf (DistinguishedName <$> genByteString 10)
             , CertVerify <$> arbitrary
             , Finished . VerifyData <$> genByteString 12
             ]
@@ -167,10 +166,10 @@ knownVersions = [TLS13, TLS12]
 arbitraryVersions :: Gen [Version]
 arbitraryVersions = sublistOf knownVersions
 
--- for performance reason P521, FFDHE6144, FFDHE8192 are not tested
+-- for performance reason P521 is not tested
 knownGroups, knownECGroups, knownFFGroups :: [Group]
-knownECGroups = [P256, P384, X25519, X448]
-knownFFGroups = [FFDHE2048, FFDHE3072, FFDHE4096]
+knownECGroups = [P256, P384, X25519]
+knownFFGroups = []
 knownGroups = knownECGroups ++ knownFFGroups
 
 defaultECGroup :: Group
@@ -195,8 +194,8 @@ newtype FFDHE = FFDHE [Group] deriving (Show)
 instance Arbitrary FFDHE where
     arbitrary = FFDHE <$> shuffle knownFFGroups
 
+-- DSA is no longer supported
 isCredentialDSA :: (CertificateChain, PrivKey) -> Bool
-isCredentialDSA (_, PrivKeyDSA _) = True
 isCredentialDSA _ = False
 
 ----------------------------------------------------------------
@@ -206,20 +205,18 @@ arbitraryCredentialsOfEachType = arbitraryCredentialsOfEachType' >>= shuffle
 
 arbitraryCredentialsOfEachType' :: Gen [(CertificateChain, PrivKey)]
 arbitraryCredentialsOfEachType' = do
-    let (pubKey, privKey) = getGlobalRSAPair
+    let rsaKP = getGlobalRSAPair
         curveName = defaultECCurve
-    (ecdsaPub, ecdsaPriv) <- arbitraryECDSAPair curveName
-    (ed25519Pub, ed25519Priv) <- arbitraryEd25519Pair
-    (ed448Pub, ed448Priv) <- arbitraryEd448Pair
+    ecKP <- arbitraryECDSAPair curveName
+    (_, ed25519Priv) <- arbitraryEd25519Pair
     mapM
-        ( \(pub, priv) -> do
-            cert <- arbitraryX509WithKey (pub, priv)
+        ( \priv -> do
+            cert <- arbitraryX509WithKey priv
             return (CertificateChain [cert], priv)
         )
-        [ (PubKeyRSA pubKey, PrivKeyRSA privKey)
-        , (toPubKeyEC curveName ecdsaPub, toPrivKeyEC curveName ecdsaPriv)
-        , (PubKeyEd25519 ed25519Pub, PrivKeyEd25519 ed25519Priv)
-        , (PubKeyEd448 ed448Pub, PrivKeyEd448 ed448Priv)
+        [ PrivKeyRSA rsaKP
+        , PrivKeyEC curveName ecKP
+        , PrivKeyEd25519 ed25519Priv
         ]
 
 arbitraryCredentialsOfEachCurve :: Gen [(CertificateChain, PrivKey)]
@@ -227,24 +224,21 @@ arbitraryCredentialsOfEachCurve = arbitraryCredentialsOfEachCurve' >>= shuffle
 
 arbitraryCredentialsOfEachCurve' :: Gen [(CertificateChain, PrivKey)]
 arbitraryCredentialsOfEachCurve' = do
-    ecdsaPairs <-
+    ecdsaPrivKeys <-
         mapM
             ( \curveName -> do
-                (ecdsaPub, ecdsaPriv) <- arbitraryECDSAPair curveName
-                return (toPubKeyEC curveName ecdsaPub, toPrivKeyEC curveName ecdsaPriv)
+                ecKP <- arbitraryECDSAPair curveName
+                return (PrivKeyEC curveName ecKP)
             )
             knownECCurves
-    (ed25519Pub, ed25519Priv) <- arbitraryEd25519Pair
-    (ed448Pub, ed448Priv) <- arbitraryEd448Pair
+    (_, ed25519Priv) <- arbitraryEd25519Pair
     mapM
-        ( \(pub, priv) -> do
-            cert <- arbitraryX509WithKey (pub, priv)
+        ( \priv -> do
+            cert <- arbitraryX509WithKey priv
             return (CertificateChain [cert], priv)
         )
-        $ [ (PubKeyEd25519 ed25519Pub, PrivKeyEd25519 ed25519Priv)
-          , (PubKeyEd448 ed448Pub, PrivKeyEd448 ed448Priv)
-          ]
-            ++ ecdsaPairs
+        $ [PrivKeyEd25519 ed25519Priv]
+            ++ ecdsaPrivKeys
 
 ----------------------------------------------------------------
 
@@ -395,14 +389,10 @@ arbitraryPairParamsWithVersionsAndCiphers (clientVersions, serverVersions) (clie
                         , supportedGroups = clientGroups
                         , supportedHashSignatures = clientHashSignatures
                         }
-                , clientShared =
-                    defaultShared
-                        { sharedValidationCache =
-                            ValidationCache
-                                { cacheAdd = \_ _ _ -> return ()
-                                , cacheQuery = \_ _ _ -> return ValidationCachePass
-                                }
-                        }
+                , clientShared = defaultShared
+                , clientHooks = defaultClientHooks
+                    { onServerCertificate = \_ _ _ _ -> return []
+                    }
                 }
     return (clientState, serverState)
 
@@ -412,9 +402,9 @@ arbitraryClientCredential _ = arbitraryCredentialsOfEachCurve' >>= elements
 arbitraryRSACredentialWithUsage
     :: [ExtKeyUsageFlag] -> Gen (CertificateChain, PrivKey)
 arbitraryRSACredentialWithUsage usageFlags = do
-    let (pubKey, privKey) = getGlobalRSAPair
-    cert <- arbitraryX509WithKeyAndUsage usageFlags (PubKeyRSA pubKey, ())
-    return (CertificateChain [cert], PrivKeyRSA privKey)
+    let rsaKP = getGlobalRSAPair
+    cert <- arbitraryX509WithKeyAndUsage usageFlags (PrivKeyRSA rsaKP)
+    return (CertificateChain [cert], PrivKeyRSA rsaKP)
 
 instance {-# OVERLAPS #-} Arbitrary (EMSMode, EMSMode) where
     arbitrary = (,) <$> gen <*> gen
@@ -449,3 +439,4 @@ genByteString i = B.pack <$> vector i
 unsafeHead :: [a] -> a
 unsafeHead [] = error "unsafeHead"
 unsafeHead (x : _) = x
+

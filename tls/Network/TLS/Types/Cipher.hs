@@ -3,7 +3,6 @@
 
 module Network.TLS.Types.Cipher where
 
-import Crypto.Cipher.Types (AuthTag)
 import Data.IORef
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
@@ -12,6 +11,12 @@ import Text.Printf
 import Network.TLS.Crypto (Hash (..))
 import Network.TLS.Imports
 import Network.TLS.Types.Version
+
+----------------------------------------------------------------
+
+-- | Authentication tag for AEAD ciphers.
+newtype AuthTag = AuthTag ByteString
+    deriving (Eq, Show)
 
 ----------------------------------------------------------------
 

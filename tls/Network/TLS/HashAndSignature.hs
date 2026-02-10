@@ -155,9 +155,6 @@ supportedSignatureSchemes =
     , (HashSHA512,    SignatureRSA)    -- rsa_pkcs1_sha512(0x0601)
     , (HashSHA384,    SignatureRSA)    -- rsa_pkcs1_sha384(0x0501)
     , (HashSHA256,    SignatureRSA)    -- rsa_pkcs1_sha256(0x0401)
-    -- Legacy algorithms
-    , (HashSHA1,      SignatureRSA)    -- rsa_pkcs1_sha1  (0x0201)
-    , (HashSHA1,      SignatureECDSA)  -- ecdsa_sha1      (0x0203)
     ]
 
 signatureSchemesForTLS13 :: [(HashAlgorithm, SignatureAlgorithm)]

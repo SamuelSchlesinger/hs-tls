@@ -42,6 +42,7 @@ module Network.TLS.Handshake.Common (
 import Control.Concurrent.MVar
 import Control.Exception (IOException, fromException, handle, throwIO)
 import Control.Monad.State.Strict
+import Crypto.BoringSSL.HMAC (constTimeEq)
 import qualified Data.ByteString as B
 
 import Network.TLS.Cipher
@@ -301,7 +302,9 @@ processFinished :: Context -> VerifyData -> IO ()
 processFinished ctx verifyData = do
     (cc, ver) <- usingState_ ctx $ (,) <$> getRole <*> getVersion
     expected <- VerifyData <$> generateFinished ctx ver (invertRole cc)
-    when (expected /= verifyData) $ decryptError "finished verification failed"
+    let VerifyData expectedBytes = expected
+        VerifyData actualBytes = verifyData
+    when (not $ constTimeEq expectedBytes actualBytes) $ decryptError "finished verification failed"
     usingState_ ctx $ setVerifyDataForRecv verifyData
 
 processCertificate :: Context -> Role -> CertificateChain -> IO ()

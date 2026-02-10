@@ -15,10 +15,11 @@ module Network.TLS.Credentials (
     credentialMatchesHashSignatures,
 ) where
 
-import Data.X509
-import qualified Data.X509 as X509
-import Data.X509.File
-import Data.X509.Memory
+import qualified Crypto.BoringSSL.PEM as PEM
+import qualified Crypto.BoringSSL.PrivateKey as BPK
+import qualified Crypto.BoringSSL.X509 as BX509
+import qualified Data.ByteString as B
+import System.IO.Unsafe (unsafePerformIO)
 
 import Network.TLS.Crypto
 import Network.TLS.Imports
@@ -69,12 +70,10 @@ credentialLoadX509Chain
     -- ^ private key associated
     -> IO (Either String Credential)
 credentialLoadX509Chain certFile chainFiles privateFile = do
-    x509 <- readSignedObject certFile
-    chains <- mapM readSignedObject chainFiles
-    keys <- readKeyFile privateFile
-    case keys of
-        [] -> return $ Left "no keys found"
-        (k : _) -> return $ Right (CertificateChain . concat $ x509 : chains, k)
+    certData <- B.readFile certFile
+    chainDatas <- mapM B.readFile chainFiles
+    keyData <- B.readFile privateFile
+    return $ credentialLoadX509ChainFromMemory certData chainDatas keyData
 
 -- | similar to 'credentialLoadX509FromMemory' but also allow
 -- specifying chain certificates.
@@ -84,12 +83,35 @@ credentialLoadX509ChainFromMemory
     -> ByteString
     -> Either String Credential
 credentialLoadX509ChainFromMemory certData chainData privateData =
-    let x509 = readSignedObjectFromMemory certData
-        chains = map readSignedObjectFromMemory chainData
-        keys = readKeyFileFromMemory privateData
-     in case keys of
-            [] -> Left "no keys found"
-            (k : _) -> Right (CertificateChain . concat $ x509 : chains, k)
+    let certs = readSignedObjectFromMemory certData
+        chains = concatMap readSignedObjectFromMemory chainData
+        mkey = readKeyFromMemory privateData
+     in case mkey of
+            Left err -> Left err
+            Right k -> Right (CertificateChain (certs ++ chains), k)
+
+-- | Read signed certificates from a PEM-encoded ByteString.
+readSignedObjectFromMemory :: ByteString -> [SignedCertificate]
+readSignedObjectFromMemory pem =
+    case PEM.pemDecodeMany pem of
+        Left _ -> []
+        Right blocks ->
+            [ sc
+            | ("CERTIFICATE", der) <- blocks
+            , Right x509 <- [BX509.parseDER der]
+            , let sc = SignedCertificate der x509
+            ]
+
+-- | Read a private key from a PEM-encoded ByteString.
+readKeyFromMemory :: ByteString -> Either String PrivKey
+readKeyFromMemory pem = unsafePerformIO $ do
+    result <- BPK.loadPrivateKeyPEM pem
+    return $ case result of
+        Left err -> Left ("failed to load private key: " ++ show err)
+        Right (BPK.SomeRSAKey kp) -> Right (PrivKeyRSA kp)
+        Right (BPK.SomeECKey curve kp) -> Right (PrivKeyEC curve kp)
+        Right (BPK.SomeEd25519Key pk) -> Right (PrivKeyEd25519 pk)
+        Right (BPK.SomeX25519Key _) -> Left "X25519 keys are not supported for TLS credentials"
 
 credentialsListSigningAlgorithms :: Credentials -> [KeyExchangeSignatureAlg]
 credentialsListSigningAlgorithms (Credentials l) = mapMaybe credentialCanSign l
@@ -114,9 +136,9 @@ credentialCanDecrypt :: Credential -> Maybe ()
 credentialCanDecrypt (chain, priv) =
     case (pub, priv) of
         (PubKeyRSA _, PrivKeyRSA _) ->
-            case extensionGet (certExtensions cert) of
+            case certKeyUsageFlags cert of
                 Nothing -> Just ()
-                Just (ExtKeyUsage flags)
+                Just flags
                     | KeyUsage_keyEncipherment `elem` flags -> Just ()
                     | otherwise -> Nothing
         _ -> Nothing
@@ -127,9 +149,9 @@ credentialCanDecrypt (chain, priv) =
 
 credentialCanSign :: Credential -> Maybe KeyExchangeSignatureAlg
 credentialCanSign (chain, priv) =
-    case extensionGet (certExtensions cert) of
+    case certKeyUsageFlags cert of
         Nothing -> findKeyExchangeSignatureAlg (pub, priv)
-        Just (ExtKeyUsage flags)
+        Just flags
             | KeyUsage_digitalSignature `elem` flags ->
                 findKeyExchangeSignatureAlg (pub, priv)
             | otherwise -> Nothing
@@ -146,25 +168,30 @@ credentialPublicPrivateKeys (chain, priv) = pub `seq` (pub, priv)
     signed = getCertificateChainLeaf chain
 
 getHashSignature :: SignedCertificate -> Maybe TLS.HashAndSignatureAlgorithm
-getHashSignature signed =
-    case signedAlg $ getSigned signed of
-        SignatureALG hashAlg PubKeyALG_RSA -> convertHash TLS.SignatureRSA hashAlg
-        SignatureALG hashAlg PubKeyALG_DSA -> convertHash TLS.SignatureDSA hashAlg
-        SignatureALG hashAlg PubKeyALG_EC -> convertHash TLS.SignatureECDSA hashAlg
-        SignatureALG X509.HashSHA256 PubKeyALG_RSAPSS -> Just (TLS.HashIntrinsic, TLS.SignatureRSApssRSAeSHA256)
-        SignatureALG X509.HashSHA384 PubKeyALG_RSAPSS -> Just (TLS.HashIntrinsic, TLS.SignatureRSApssRSAeSHA384)
-        SignatureALG X509.HashSHA512 PubKeyALG_RSAPSS -> Just (TLS.HashIntrinsic, TLS.SignatureRSApssRSAeSHA512)
-        SignatureALG_IntrinsicHash PubKeyALG_Ed25519 -> Just (TLS.HashIntrinsic, TLS.SignatureEd25519)
-        SignatureALG_IntrinsicHash PubKeyALG_Ed448 -> Just (TLS.HashIntrinsic, TLS.SignatureEd448)
-        _ -> Nothing
+getHashSignature signed = unsafePerformIO $ do
+    mAlgInfo <- BX509.certSignatureAlgorithm (scCert signed)
+    return $ case mAlgInfo of
+        Nothing -> Nothing
+        Just info -> convertSigAlg (BX509.sigAlgShortName info)
   where
-    convertHash sig X509.HashMD5 = Just (TLS.HashMD5, sig)
-    convertHash sig X509.HashSHA1 = Just (TLS.HashSHA1, sig)
-    convertHash sig X509.HashSHA224 = Just (TLS.HashSHA224, sig)
-    convertHash sig X509.HashSHA256 = Just (TLS.HashSHA256, sig)
-    convertHash sig X509.HashSHA384 = Just (TLS.HashSHA384, sig)
-    convertHash sig X509.HashSHA512 = Just (TLS.HashSHA512, sig)
-    convertHash _ _ = Nothing
+    convertSigAlg name = case name of
+        "RSA-SHA1" -> Just (TLS.HashSHA1, TLS.SignatureRSA)
+        "RSA-SHA224" -> Just (TLS.HashSHA224, TLS.SignatureRSA)
+        "RSA-SHA256" -> Just (TLS.HashSHA256, TLS.SignatureRSA)
+        "RSA-SHA384" -> Just (TLS.HashSHA384, TLS.SignatureRSA)
+        "RSA-SHA512" -> Just (TLS.HashSHA512, TLS.SignatureRSA)
+        "sha256WithRSAEncryption" -> Just (TLS.HashSHA256, TLS.SignatureRSA)
+        "sha384WithRSAEncryption" -> Just (TLS.HashSHA384, TLS.SignatureRSA)
+        "sha512WithRSAEncryption" -> Just (TLS.HashSHA512, TLS.SignatureRSA)
+        "RSA-PSS" -> Nothing -- can't determine hash from short name alone
+        "rsassaPss" -> Nothing
+        "ecdsa-with-SHA1" -> Just (TLS.HashSHA1, TLS.SignatureECDSA)
+        "ecdsa-with-SHA224" -> Just (TLS.HashSHA224, TLS.SignatureECDSA)
+        "ecdsa-with-SHA256" -> Just (TLS.HashSHA256, TLS.SignatureECDSA)
+        "ecdsa-with-SHA384" -> Just (TLS.HashSHA384, TLS.SignatureECDSA)
+        "ecdsa-with-SHA512" -> Just (TLS.HashSHA512, TLS.SignatureECDSA)
+        "ED25519" -> Just (TLS.HashIntrinsic, TLS.SignatureEd25519)
+        _ -> Nothing
 
 -- | Checks whether certificate signatures in the chain comply with a list of
 -- hash/signature algorithm pairs.  Currently the verification applies only to

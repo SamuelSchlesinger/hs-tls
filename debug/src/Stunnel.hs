@@ -4,12 +4,9 @@
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException (..), finally, throw)
 import qualified Control.Exception as E
-import qualified Crypto.PubKey.DH as DH ()
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 import Data.Default (def)
-import Data.X509.CertificateStore
-import Data.X509.Validation
 import Network.Socket hiding (Debug)
 import Network.TLS.SessionManager
 import System.Console.GetOpt
@@ -18,7 +15,7 @@ import System.Exit
 import System.IO
 import System.IO.Error (isEOFError)
 
-import Network.TLS
+import Network.TLS hiding (Certificate, getCertificate)
 import Network.TLS.Extra.Cipher
 
 import Common
@@ -171,17 +168,16 @@ doClient source destination@(Address a _) flags = do
                         }
 
     store <- getTrustAnchors flags
-    let validateCache
+    let hooks
             | NoCertValidation `elem` flags =
-                ValidationCache
-                    (\_ _ _ -> return ValidationCachePass)
-                    (\_ _ _ -> return ())
+                def{onServerCertificate = \_ _ _ _ -> return []}
             | otherwise = def
     let clientstate =
             (defaultParamsClient a B.empty)
                 { clientSupported = def{supportedCiphers = ciphersuite_all}
                 , clientShared =
-                    def{sharedCAStore = store, sharedValidationCache = validateCache}
+                    def{sharedCAStore = store}
+                , clientHooks = hooks
                 }
 
     case srcaddr of

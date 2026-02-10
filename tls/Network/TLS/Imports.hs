@@ -19,8 +19,8 @@ module Network.TLS.Imports (
 import Control.Applicative
 import Control.Monad
 import Data.Bits
-import Data.ByteArray.Encoding as B
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Base16 as Base16
 import Data.ByteString.Char8 ()
 import Data.Functor
 import Data.List
@@ -31,4 +31,4 @@ import Data.Word
 import qualified Prelude as P
 
 showBytesHex :: ByteString -> P.String
-showBytesHex bs = P.show (B.convertToBase B.Base16 bs :: ByteString)
+showBytesHex bs = P.show (Base16.encode bs)

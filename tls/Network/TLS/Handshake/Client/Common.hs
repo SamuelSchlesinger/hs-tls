@@ -15,7 +15,7 @@ module Network.TLS.Handshake.Client.Common (
 
 import Control.Exception (SomeException)
 import Control.Monad.State.Strict
-import Data.X509 (ExtKeyUsageFlag (..))
+import Network.TLS.X509 (ExtKeyUsageFlag (..))
 
 import Network.TLS.Cipher
 import Network.TLS.Context.Internal

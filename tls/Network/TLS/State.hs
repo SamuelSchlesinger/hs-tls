@@ -11,7 +11,6 @@ module Network.TLS.State (
     TLSSt,
     runTLSState,
     newTLSState,
-    withTLSRNG,
     setVerifyDataForSend,
     setVerifyDataForRecv,
     getVerifyData,
@@ -67,12 +66,10 @@ module Network.TLS.State (
 
     -- * random
     genRandom,
-    withRNG,
 ) where
 
 import Control.Monad.State.Strict
-import Crypto.Random
-import Data.X509 (CertificateChain)
+import Network.TLS.X509 (CertificateChain)
 
 import Network.TLS.ErrT
 import Network.TLS.Extension
@@ -322,14 +319,10 @@ getRole = gets stClientContext
 
 genRandom :: Int -> TLSSt ByteString
 genRandom n = do
-    withRNG (getRandomBytes n)
-
-withRNG :: MonadPseudoRandom StateRNG a -> TLSSt a
-withRNG f = do
     st <- get
-    let (a, rng') = withTLSRNG (stRandomGen st) f
+    let (bytes, rng') = hmacDrbgGenerate n (stRandomGen st)
     put (st{stRandomGen = rng'})
-    return a
+    return bytes
 
 setTLS12SessionTicket :: Ticket -> TLSSt ()
 setTLS12SessionTicket t = modify' (\st -> st{stTLS12SessionTicket = Just t})

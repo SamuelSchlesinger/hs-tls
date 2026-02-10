@@ -19,11 +19,9 @@ module Common (
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
 import Data.Char (isDigit)
-import Data.X509.CertificateStore
 import Network.TLS hiding (HostName)
 import Network.TLS.Extra.FFDHE
 import System.Exit
-import System.X509
 
 import Imports
 
@@ -86,13 +84,11 @@ split c s = case break (c ==) s of
 
 getCertificateStore :: [FilePath] -> IO CertificateStore
 getCertificateStore [] = getSystemCertificateStore
-getCertificateStore paths = foldM readPathAppend mempty paths
-  where
-    readPathAppend acc path = do
-        mstore <- readCertificateStore path
-        case mstore of
-            Nothing -> error ("invalid certificate store: " ++ path)
-            Just st -> return $! mappend st acc
+getCertificateStore paths = do
+    mstore <- readCertificateStoreFromFiles paths
+    case mstore of
+        Nothing -> error ("invalid certificate store: no valid certificates found in " ++ show paths)
+        Just store -> return store
 
 getLogger :: Maybe FilePath -> (String -> IO ())
 getLogger Nothing = \_ -> return ()
