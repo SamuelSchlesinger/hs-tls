@@ -95,7 +95,7 @@ groupGetPubShared (GroupPub_X255 peerPub) = do
     (myPub, myPri) <- X25519.generateKeyPair
     case X25519.computeSharedSecret myPri peerPub of
         Left _ -> return Nothing
-        Right shared -> return $ Just (GroupPub_X255 myPub, shared)
+        Right shared -> return $ Just (GroupPub_X255 myPub, X25519.secureBytesToByteString shared)
 
 ecGetPubShared
     :: ECDH.ECCurve
@@ -118,7 +118,7 @@ ecGetPubShared curve peerPubBytes pubTag = do
                             eshared <- ECDH.ecdhComputeRawSecret myKp peerPub
                             case eshared of
                                 Left _ -> return Nothing
-                                Right shared -> return $ Just (pubTag myPubBytes, shared)
+                                Right shared -> return $ Just (pubTag myPubBytes, ECDH.secureBytesToByteString shared)
 
 -- | Compute a shared secret given a peer's public key and our private key.
 groupGetShared :: GroupPublic -> GroupPrivate -> Maybe GroupKey
@@ -128,7 +128,7 @@ groupGetShared (GroupPub_P521 peerPubBytes) (GroupPri_P521 myKp) = ecGetShared E
 groupGetShared (GroupPub_X255 peerPub) (GroupPri_X255 myPri) =
     case X25519.computeSharedSecret myPri peerPub of
         Left _ -> Nothing
-        Right shared -> Just shared
+        Right shared -> Just (X25519.secureBytesToByteString shared)
 groupGetShared _ _ = Nothing
 
 ecGetShared :: ECDH.ECCurve -> ByteString -> ECDH.ECKeyPair -> Maybe ByteString
@@ -140,7 +140,7 @@ ecGetShared curve peerPubBytes myKp = unsafePerformIO $ do
             eshared <- ECDH.ecdhComputeRawSecret myKp peerPub
             case eshared of
                 Left _ -> return Nothing
-                Right shared -> return $ Just shared
+                Right shared -> return $ Just (ECDH.secureBytesToByteString shared)
 
 -- | Encode a group public key to wire format.
 encodeGroupPublic :: GroupPublic -> ByteString

@@ -6,7 +6,7 @@ packages:
   test-scripts
 
 optional-packages:
-  ../boringssl
+  ../boringssl-hs
 
 test-show-details: direct
 

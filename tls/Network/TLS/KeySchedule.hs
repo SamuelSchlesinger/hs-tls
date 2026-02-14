@@ -23,7 +23,7 @@ import Network.TLS.Wire
 hkdfExtract :: Hash -> ByteString -> ByteString -> ByteString
 hkdfExtract h salt ikm =
     case BHKDF.hkdfExtract (hashAlgorithm h) ikm salt of
-        Right prk -> prk
+        Right prk -> BHKDF.secureBytesToByteString prk
         Left err -> E.throw $ Uncontextualized $ Error_Protocol ("hkdfExtract: " ++ show err) InternalError
 
 ----------------------------------------------------------------
@@ -55,7 +55,7 @@ hkdfExpandLabel h secret label ctx outlen = expand' h secret hkdfLabel outlen
 expand' :: Hash -> ByteString -> ByteString -> Int -> ByteString
 expand' h secret label len =
     case BHKDF.hkdfExpand (hashAlgorithm h) secret label len of
-        Right okm -> okm
+        Right okm -> BHKDF.secureBytesToByteString okm
         Left err -> E.throw $ Uncontextualized $ Error_Protocol ("hkdfExpandLabel: " ++ show err) InternalError
 
 ----------------------------------------------------------------
